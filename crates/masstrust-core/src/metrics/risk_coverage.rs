@@ -98,6 +98,7 @@ mod tests {
                     inchikey: None,
                     formula: None,
                     is_correct,
+                    group: None,
                 },
                 Candidate {
                     query_id: query_id.into(),
@@ -109,6 +110,7 @@ mod tests {
                     inchikey: None,
                     formula: None,
                     is_correct: is_correct.map(|b| !b),
+                    group: None,
                 },
             ],
         }

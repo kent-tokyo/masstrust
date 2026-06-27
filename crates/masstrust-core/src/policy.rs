@@ -24,19 +24,31 @@ pub fn load_policy(path: &Path) -> Result<PolicyFile, MasstrustError> {
 ///
 /// Queries whose top-1 candidate cannot be scored (e.g. single-candidate queries with
 /// `score-gap`) receive `confidence = NAN` and `accepted = false`.
+///
+/// When `policy.group_thresholds` is set, the threshold is looked up by the `group` field
+/// of the top-1 candidate.  Queries with an unknown group (or `group = None`) fall back to
+/// `policy.threshold`.
 pub fn apply_policy(rankings: &[QueryRanking], policy: &PolicyFile) -> Vec<AnnotationDecision> {
     rankings
         .iter()
         .filter_map(|r| {
             let top1 = r.candidates.iter().min_by_key(|c| c.rank)?;
             let confidence = compute_confidence(r, policy.scoring_method).unwrap_or(f64::NAN);
-            let accepted = confidence.is_finite() && confidence >= policy.threshold;
+
+            // Use group-specific threshold if available; fall back to global.
+            let threshold = top1
+                .group
+                .as_ref()
+                .and_then(|g| policy.group_thresholds.as_ref()?.get(g).copied())
+                .unwrap_or(policy.threshold);
+
+            let accepted = confidence.is_finite() && confidence >= threshold;
             Some(AnnotationDecision {
                 query_id: r.query_id.clone(),
                 candidate_id: top1.candidate_id.clone(),
                 confidence,
                 accepted,
-                threshold: policy.threshold,
+                threshold,
                 method: format!("{:?}", policy.scoring_method),
             })
         })
@@ -58,6 +70,8 @@ mod tests {
             calibration_method: CalibrationMethod::Empirical,
             confidence_level: None,
             created_by: "masstrust".into(),
+            group_col: None,
+            group_thresholds: None,
         }
     }
 
@@ -75,6 +89,7 @@ mod tests {
                     inchikey: None,
                     formula: None,
                     is_correct: None,
+                    group: None,
                 },
                 Candidate {
                     query_id: query_id.into(),
@@ -86,6 +101,7 @@ mod tests {
                     inchikey: None,
                     formula: None,
                     is_correct: None,
+                    group: None,
                 },
             ],
         }
@@ -143,6 +159,7 @@ mod tests {
                 inchikey: None,
                 formula: None,
                 is_correct: None,
+                group: None,
             }],
         };
         let decisions = apply_policy(&[r], &policy);

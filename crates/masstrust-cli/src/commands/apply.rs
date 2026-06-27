@@ -20,7 +20,16 @@ pub struct ApplyArgs {
 
 pub fn run(args: ApplyArgs) -> anyhow::Result<()> {
     let p = policy::load_policy(&args.policy)?;
-    let candidates = io::read_candidates(&args.input)?;
+    let mut candidates = io::read_candidates(&args.input)?;
+
+    // Attach group column if the policy was calibrated with one.
+    if let Some(group_col) = &p.group_col {
+        let groups = io::read_group_column(&args.input, group_col)?;
+        for (c, g) in candidates.iter_mut().zip(groups) {
+            c.group = g;
+        }
+    }
+
     let rankings = io::group_by_query(candidates);
     let decisions = policy::apply_policy(&rankings, &p);
 

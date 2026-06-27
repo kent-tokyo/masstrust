@@ -22,10 +22,10 @@ use crate::types::{QueryRanking, ScoringMethod};
 ///     candidates: vec![
 ///         Candidate { query_id: "q1".into(), candidate_id: "c1".into(), rank: 1,
 ///                     score: 0.9, probability: None, smiles: None,
-///                     inchikey: None, formula: None, is_correct: None },
+///                     inchikey: None, formula: None, is_correct: None, group: None },
 ///         Candidate { query_id: "q1".into(), candidate_id: "c2".into(), rank: 2,
 ///                     score: 0.7, probability: None, smiles: None,
-///                     inchikey: None, formula: None, is_correct: None },
+///                     inchikey: None, formula: None, is_correct: None, group: None },
 ///     ],
 /// };
 /// let confidence = compute_confidence(&ranking, ScoringMethod::ScoreGap);

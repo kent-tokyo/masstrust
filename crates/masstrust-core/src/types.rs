@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 /// One candidate molecular annotation for a query spectrum.
@@ -24,6 +26,10 @@ pub struct Candidate {
     pub formula: Option<String>,
     /// Ground-truth label used for calibration and evaluation (`true` = correct annotation).
     pub is_correct: Option<bool>,
+    /// Calibration group (e.g. adduct type, instrument).  Not read from CSV automatically;
+    /// populated via [`io::read_group_column`](crate::io::read_group_column).
+    #[serde(skip_deserializing, default)]
+    pub group: Option<String>,
 }
 
 /// All candidates for a single query spectrum, grouped together.
@@ -47,7 +53,7 @@ pub struct AnnotationDecision {
     pub confidence: f64,
     /// Whether the annotation was accepted (`confidence >= threshold` and confidence is finite).
     pub accepted: bool,
-    /// Threshold used for the accept/abstain decision.
+    /// Threshold used for the accept/abstain decision (may be group-specific).
     pub threshold: f64,
     /// Name of the scoring method that produced `confidence`.
     pub method: String,
@@ -102,13 +108,19 @@ pub struct PolicyFile {
     /// Schema version.  Must be `"0.1.0"` for this release.
     pub version: String,
     pub scoring_method: ScoringMethod,
-    /// Confidence threshold: queries with `confidence >= threshold` are accepted.
+    /// Global confidence threshold (fallback when no group-specific threshold applies).
     pub threshold: f64,
     pub target_error_rate: f64,
     pub calibration_method: CalibrationMethod,
-    /// Confidence level used with [`CalibrationMethod::Binomial`].  `None` for empirical.
+    /// Confidence level used with [`CalibrationMethod::Binomial`].  `None` for empirical/CRC.
     pub confidence_level: Option<f64>,
     pub created_by: String,
+    /// CSV column used for group assignment during calibration.  `None` = no grouping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_col: Option<String>,
+    /// Per-group thresholds.  Queries whose group is not in this map use `threshold`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_thresholds: Option<HashMap<String, f64>>,
 }
 
 /// One row of a risk-coverage curve.

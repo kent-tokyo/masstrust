@@ -179,6 +179,22 @@ pub fn write_json<T: serde::Serialize>(value: &T, path: &Path) -> Result<(), Mas
     Ok(())
 }
 
+/// Read a single named column from a CSV file, in row order.
+///
+/// Returns `None` for empty cells.  Returns [`MasstrustError::MissingColumn`] if
+/// `col` is not in the header row.
+pub fn read_group_column(path: &Path, col: &str) -> Result<Vec<Option<String>>, MasstrustError> {
+    let mut rdr = csv::Reader::from_path(path)?;
+    let headers = rdr.headers()?.clone();
+    let idx = headers
+        .iter()
+        .position(|h| h == col)
+        .ok_or_else(|| MasstrustError::MissingColumn(col.to_string()))?;
+    rdr.records()
+        .map(|r| Ok(r?.get(idx).filter(|s| !s.is_empty()).map(str::to_string)))
+        .collect()
+}
+
 pub fn read_policy(path: &Path) -> Result<PolicyFile, MasstrustError> {
     let file = std::fs::File::open(path)?;
     let policy: PolicyFile = serde_json::from_reader(file)?;
@@ -250,6 +266,7 @@ mod tests {
                 inchikey: None,
                 formula: None,
                 is_correct: None,
+                group: None,
             },
             Candidate {
                 query_id: "qa".into(),
@@ -261,6 +278,7 @@ mod tests {
                 inchikey: None,
                 formula: None,
                 is_correct: None,
+                group: None,
             },
         ];
         let groups = group_by_query(candidates);

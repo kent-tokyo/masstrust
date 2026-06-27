@@ -38,6 +38,8 @@
 //!     calibration_method: CalibrationMethod::Empirical,
 //!     confidence_level: None,
 //!     created_by: "masstrust".into(),
+//!     group_col: None,
+//!     group_thresholds: None,
 //! };
 //! save_policy(&policy, Path::new("policy.json")).unwrap();
 //!

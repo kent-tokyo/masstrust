@@ -1,0 +1,17 @@
+query_id,candidate_id,rank,score,probability,adduct,is_correct
+q1,cand_a,1,0.92,0.71,[M+H]+,true
+q1,cand_b,2,0.70,0.21,[M+H]+,false
+q2,cand_c,1,0.88,0.62,[M+H]+,true
+q2,cand_d,2,0.75,0.30,[M+H]+,false
+q3,cand_e,1,0.85,0.58,[M+H]+,false
+q3,cand_f,2,0.80,0.35,[M+H]+,true
+q4,cand_g,1,0.95,0.90,[M-H]-,true
+q4,cand_h,2,0.60,0.10,[M-H]-,false
+q5,cand_i,1,0.91,0.82,[M-H]-,true
+q5,cand_j,2,0.65,0.18,[M-H]-,false
+q6,cand_k,1,0.78,0.55,[M-H]-,false
+q6,cand_l,2,0.74,0.45,[M-H]-,true
+q7,cand_m,1,0.82,0.65,[M+Na]+,true
+q7,cand_n,2,0.78,0.35,[M+Na]+,false
+q8,cand_o,1,0.70,0.52,[M+Na]+,false
+q8,cand_p,2,0.68,0.48,[M+Na]+,true

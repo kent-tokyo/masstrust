@@ -40,6 +40,7 @@ mod tests {
                 inchikey: None,
                 formula: None,
                 is_correct: None,
+                group: None,
             })
             .collect();
         QueryRanking {

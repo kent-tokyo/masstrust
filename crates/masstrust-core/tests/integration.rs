@@ -61,6 +61,8 @@ fn test_apply_unlabeled() {
         calibration_method: CalibrationMethod::Empirical,
         confidence_level: None,
         created_by: "masstrust".into(),
+        group_col: None,
+        group_thresholds: None,
     };
 
     let candidates = io::read_candidates(unlabeled_csv()).unwrap();
