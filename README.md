@@ -5,6 +5,8 @@ Calibrated trust and abstention for MS/MS molecular annotations.
 [![CI](https://github.com/kent-tokyo/masstrust/actions/workflows/ci.yml/badge.svg)](https://github.com/kent-tokyo/masstrust/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 
+[日本語](README_ja.md) | [中文](README_zh.md)
+
 ---
 
 ## What masstrust does
@@ -240,7 +242,7 @@ A calibrated policy is saved as a reproducible JSON file:
 
 ## References
 
-- Angelopoulos, A. N., Bates, S., Candès, E. J., Jordan, M. I., & Lei, L. (2022). **Conformal Risk Control.** *arXiv:2208.02814.* — basis for the `crc` calibration method.
+- Angelopoulos, A. N., Bates, S., Fisch, A., Lei, L., & Schuster, R. (2022). **Conformal Risk Control.** *arXiv:2208.02814.* — basis for the `crc` calibration method.
 - Geifman, Y., & El-Yaniv, R. (2017). **Selective classification for deep neural networks.** *NeurIPS.* — foundational selective prediction framework.
 
 ---
