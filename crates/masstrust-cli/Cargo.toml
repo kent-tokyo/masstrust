@@ -17,7 +17,7 @@ path = "src/main.rs"
 plot = ["dep:plotters"]
 
 [dependencies]
-masstrust-core = { path = "../masstrust-core" }
+masstrust-core = { path = "../masstrust-core", version = "0.1.0" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 
