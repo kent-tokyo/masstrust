@@ -88,6 +88,26 @@ masstrust batch data/*.csv \
   --out-dir ./results/
 ```
 
+### 示例输出
+
+```
+$ masstrust calibrate examples/massspecgym_candidates.csv \
+    --score score-gap --error-rate 0.05 --method empirical --out policy.json
+
+校准结果 (ScoreGap, empirical):
+  目标错误率：  0.0500
+  阈值：        0.120000
+  覆盖率：      0.5000（8 条查询中接受 4 条，50.0%）
+  观测风险：    0.0000（0 个错误接受 / 4 个接受）
+  AURC：        0.151488
+  E-AURC：      -0.001938
+
+$ masstrust apply examples/candidates.csv --policy policy.json \
+    --out trusted.csv --abstained abstained.csv
+
+接受：1  弃权：1
+```
+
 **SVG 图表**（需要 `--features plot`）：
 
 ```bash

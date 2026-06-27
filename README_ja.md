@@ -88,6 +88,26 @@ masstrust batch data/*.csv \
   --out-dir ./results/
 ```
 
+### 実行結果の例
+
+```
+$ masstrust calibrate examples/massspecgym_candidates.csv \
+    --score score-gap --error-rate 0.05 --method empirical --out policy.json
+
+キャリブレーション結果 (ScoreGap, empirical):
+  目標エラーレート:  0.0500
+  閾値:              0.120000
+  カバレッジ:        0.5000  (8件中4件を受理, 50.0%)
+  観測リスク:        0.0000  (0件の誤受理 / 4件受理)
+  AURC:              0.151488
+  E-AURC:            -0.001938
+
+$ masstrust apply examples/candidates.csv --policy policy.json \
+    --out trusted.csv --abstained abstained.csv
+
+受理: 1  棄権: 1
+```
+
 **SVG プロット**（`--features plot` が必要）：
 
 ```bash
