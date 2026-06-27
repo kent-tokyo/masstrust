@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "masstrust"
+version = "0.1.0"
+requires-python = ">=3.8"
+description = "Calibrated trust and abstention for MS/MS molecular annotations"
+
+[tool.maturin]
+manifest-path = "crates/masstrust-py/Cargo.toml"
+features = ["extension-module"]

@@ -1,0 +1,10 @@
+query_id,candidate_id,rank,score,probability,is_correct
+q1,cand_a,1,0.92,0.71,true
+q1,cand_b,2,0.81,0.21,false
+q1,cand_c,3,0.70,0.08,false
+q2,cand_d,1,0.88,0.46,false
+q2,cand_e,2,0.86,0.43,true
+q3,cand_f,1,0.95,0.90,true
+q3,cand_g,2,0.60,0.10,false
+q4,cand_h,1,0.55,0.50,false
+q4,cand_i,2,0.54,0.50,true

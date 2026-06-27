@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ── fmt / clippy / test / doc ──────────────────────────────────────────────
+  check:
+    name: check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: fmt
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        run: >
+          cargo clippy
+          --workspace --exclude masstrust-py
+          --all-targets --all-features
+          -- -D warnings
+
+      - name: test
+        run: >
+          cargo test
+          --workspace --exclude masstrust-py
+          --all-features
+
+      - name: doc
+        run: >
+          cargo doc
+          --workspace --exclude masstrust-py
+          --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # ── Python wheel (maturin) ─────────────────────────────────────────────────
+  python:
+    name: Python wheel
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install maturin
+        run: pip install "maturin>=1.0,<2.0"
+
+      - name: Build wheel
+        run: maturin build --features extension-module
+
+      - name: Smoke-test wheel
+        run: |
+          pip install target/wheels/masstrust-*.whl
+          python - <<'PYEOF'
+          import masstrust
+          curve = masstrust.compute_curve(
+              "examples/labeled_candidates.csv", "score-gap"
+          )
+          assert len(curve) == 4, f"expected 4 rows, got {len(curve)}"
+          policy = masstrust.calibrate(
+              "examples/labeled_candidates.csv", "score-gap", 0.2
+          )
+          assert policy["threshold"] < 1.0
+          print("Python smoke test passed")
+          PYEOF
+
+  # ── security audit ─────────────────────────────────────────────────────────
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked --quiet
+
+      - name: audit
+        run: cargo audit

@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/masstrust-core",
+    "crates/masstrust-cli",
+    "crates/masstrust-py",
+]
+resolver = "2"

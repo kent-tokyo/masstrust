@@ -1,0 +1,5 @@
+query_id,candidate_id,rank,score,probability
+q5,cand_j,1,0.90,0.80
+q5,cand_k,2,0.70,0.20
+q6,cand_l,1,0.60,0.55
+q6,cand_m,2,0.59,0.45
