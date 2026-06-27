@@ -77,8 +77,10 @@ pub enum CalibrationMethod {
     /// Selects the threshold with maximum coverage where the one-sided Wilson upper bound
     /// on the error rate is ≤ target.  More conservative; recommended for high-stakes use.
     Binomial,
-    /// Conformal Risk Control (Angelopoulos et al., 2022).  Guarantees E[risk] ≤ target
-    /// with a finite-sample correction of `1/(n+1)`.  No confidence-level parameter needed.
+    /// Experimental CRC-style finite-sample correction (Angelopoulos et al., 2022).
+    /// Tightens the empirical target by `1/(n+1)`.  When the calibration set is i.i.d.
+    /// and the loss is binary 0/1, the expected error rate is controlled at `target`.
+    /// See [`calibration::calibrate_crc`](crate::calibration::calibrate_crc) for caveats.
     Crc,
 }
 

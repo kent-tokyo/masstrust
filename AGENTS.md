@@ -691,16 +691,24 @@ Features:
 * parquet support behind feature flag
 * batch processing for large datasets
 
+### Implemented (experimental)
+
+* CRC-style calibration (`--method crc`) — empirical target tightened by `1/(n+1)`
+  * Assumes i.i.d. calibration data and binary 0/1 annotation loss
+  * Benchmark against empirical / binomial pending
+  * Expressed as `experimental` in docs; do not use `guaranteed` language
+
 ### Future
 
 Possible advanced features:
 
-* conformal risk control
-* grouped calibration by instrument / adduct / compound class
-* per-dataset calibration reports
-* uncertainty ensembles
-* bootstrap confidence intervals
-* calibration drift detection
+* Validated CRC examples on public MS/MS benchmarks (MassSpecGym)
+* Monotone loss formulation beyond binary 0/1
+* Grouped calibration by instrument / adduct / compound class
+* Per-dataset calibration reports
+* Uncertainty ensembles
+* Bootstrap confidence intervals for AURC
+* Calibration drift detection
 
 Do not implement future features before the MVP is stable.
 

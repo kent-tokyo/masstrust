@@ -1,32 +1,37 @@
 use super::empirical::calibrate as calibrate_empirical;
 use crate::types::RiskCoverageRow;
 
-/// Conformal Risk Control (CRC) threshold calibration.
+/// Experimental CRC-style threshold calibration.
 ///
-/// Selects the threshold with maximum coverage such that the **expected risk**
-/// is guaranteed to be ≤ `target`.
+/// Applies a `1/(n+1)` finite-sample correction to the empirical target before
+/// selecting the threshold, inspired by Angelopoulos et al. (2022) "Conformal
+/// Risk Control" (<https://arxiv.org/abs/2208.02814>).
 ///
-/// The finite-sample guarantee follows Angelopoulos et al. (2022) "Conformal
-/// Risk Control" (<https://arxiv.org/abs/2208.02814>).  For binary 0/1 loss
-/// the guarantee is:
+/// When assumptions hold (i.i.d. calibration set, binary 0/1 annotation loss),
+/// the expected risk satisfies:
 ///
 /// ```text
 /// E[risk(λ̂)] ≤ α
 /// ```
 ///
-/// achieved by tightening the empirical target by `1 / (n + 1)`, where `n`
-/// is the number of labeled calibration queries.
+/// **Assumptions and limitations:**
+/// - Calibration queries must be i.i.d. draws from the test distribution.
+/// - Loss must be binary (correct / incorrect top-1 annotation).
+/// - If the test distribution differs from the calibration set (different
+///   instrument, adduct type, compound class), the bound may not transfer.
+/// - Small calibration sets (n < 10) produce large corrections and may yield
+///   `None` even for generous targets.
 ///
-/// Returns `None` when the correction exceeds `target` (calibration set too
-/// small) or when no row satisfies the adjusted target.
+/// Returns `None` when `target − 1/(n+1) ≤ 0` or no row satisfies the
+/// adjusted target.
 ///
 /// # Comparison with other methods
 ///
-/// | Method     | Guarantee |
-/// |------------|-----------|
-/// | Empirical  | `observed_risk ≤ α` (no statistical guarantee) |
-/// | Binomial   | `P[risk ≤ α] ≥ confidence_level` |
-/// | CRC (this) | `E[risk] ≤ α` (finite-sample, no confidence parameter) |
+/// | Method        | Behaviour |
+/// |---------------|-----------|
+/// | `empirical`   | `observed_risk ≤ α` — no statistical guarantee |
+/// | `binomial`    | `P[risk ≤ α] ≥ confidence_level` — conservative |
+/// | `crc` *(this)*| `E[risk] ≤ α` when assumptions hold — experimental |
 pub fn calibrate(curve: &[RiskCoverageRow], target: f64) -> Option<f64> {
     let n = curve.last()?.total;
     let adjusted = target - 1.0 / (n as f64 + 1.0);
