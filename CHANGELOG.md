@@ -9,6 +9,20 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Experimental CRC-style threshold calibration (`--method crc`): applies a `1/(n+1)`
+  finite-sample correction to the empirical target, inspired by Angelopoulos et al. (2022).
+  Assumes i.i.d. calibration data and binary 0/1 annotation loss.  Expressed as experimental;
+  see `calibration::calibrate_crc` docs for assumptions and limitations.
+- Grouped calibration (`--group-col <column>`): calibrates a separate threshold per subgroup
+  (e.g. adduct type, instrument).  Per-group thresholds are stored in `policy.json` under
+  `group_col` and `group_thresholds`; queries with an unknown group fall back to the global
+  threshold.  `masstrust apply` automatically reads the group column specified in the policy.
+- `examples/labeled_candidates_grouped.csv`: 8-query fixture with 3 adduct types for testing
+  grouped calibration.
+- `Candidate.group` field for group assignment (populated via `io::read_group_column`).
+
 ---
 
 ## [0.1.0] — 2025-06-27

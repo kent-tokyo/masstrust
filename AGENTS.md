@@ -698,13 +698,19 @@ Features:
   * Benchmark against empirical / binomial pending
   * Expressed as `experimental` in docs; do not use `guaranteed` language
 
+* Grouped calibration (`--group-col <column>`)
+  * Per-group thresholds stored in policy JSON (`group_col`, `group_thresholds`)
+  * Queries with unknown group fall back to global threshold
+  * Requires sufficient labeled data per group for calibration
+  * Expressed as a feature, not a statistical guarantee
+
 ### Future
 
 Possible advanced features:
 
 * Validated CRC examples on public MS/MS benchmarks (MassSpecGym)
 * Monotone loss formulation beyond binary 0/1
-* Grouped calibration by instrument / adduct / compound class
+* Grouped calibration: additional examples, docs, compound-class support
 * Per-dataset calibration reports
 * Uncertainty ensembles
 * Bootstrap confidence intervals for AURC
