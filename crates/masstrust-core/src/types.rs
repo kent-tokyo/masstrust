@@ -77,6 +77,9 @@ pub enum CalibrationMethod {
     /// Selects the threshold with maximum coverage where the one-sided Wilson upper bound
     /// on the error rate is ≤ target.  More conservative; recommended for high-stakes use.
     Binomial,
+    /// Conformal Risk Control (Angelopoulos et al., 2022).  Guarantees E[risk] ≤ target
+    /// with a finite-sample correction of `1/(n+1)`.  No confidence-level parameter needed.
+    Crc,
 }
 
 /// Runtime representation of a calibrated trust policy.

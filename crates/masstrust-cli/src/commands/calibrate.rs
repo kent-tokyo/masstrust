@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 use masstrust_core::{
-    calibration::{calibrate_binomial, calibrate_empirical},
+    calibration::{calibrate_binomial, calibrate_crc, calibrate_empirical},
     io, metrics, CalibrationMethod, PolicyFile,
 };
 
@@ -37,8 +37,9 @@ pub fn run(args: CalibrateArgs) -> anyhow::Result<()> {
     let calibration_method = match args.method.as_str() {
         "empirical" => CalibrationMethod::Empirical,
         "binomial" => CalibrationMethod::Binomial,
+        "crc" => CalibrationMethod::Crc,
         other => anyhow::bail!(
-            "Unknown calibration method: '{}'. Valid: empirical, binomial",
+            "Unknown calibration method: '{}'. Valid: empirical, binomial, crc",
             other
         ),
     };
@@ -49,6 +50,7 @@ pub fn run(args: CalibrateArgs) -> anyhow::Result<()> {
 
     let threshold_opt = match calibration_method {
         CalibrationMethod::Empirical => calibrate_empirical(&curve, args.error_rate),
+        CalibrationMethod::Crc => calibrate_crc(&curve, args.error_rate),
         CalibrationMethod::Binomial => {
             let level = args.confidence_level.ok_or_else(|| {
                 anyhow::anyhow!("--confidence-level required for binomial method")
@@ -112,6 +114,15 @@ fn print_calibration_report(
     }
 
     eprintln!("  threshold:         {:.6}", policy.threshold);
+    if policy.calibration_method == masstrust_core::CalibrationMethod::Crc {
+        if let Some(row) = curve.last() {
+            let correction = 1.0 / (row.total as f64 + 1.0);
+            eprintln!(
+                "  CRC correction:    {correction:.6}  (1/(n+1), n={total})",
+                total = row.total
+            );
+        }
+    }
 
     // Find the row matching the calibrated threshold
     if let Some(row) = curve.iter().find(|r| r.threshold == policy.threshold) {

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use masstrust_core::{
-    calibration::{calibrate_binomial, calibrate_empirical},
+    calibration::{calibrate_binomial, calibrate_crc, calibrate_empirical},
     io, metrics, policy, CalibrationMethod, PolicyFile, ScoringMethod,
 };
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyValueError};
@@ -28,8 +28,9 @@ fn parse_cal(s: &str) -> PyResult<CalibrationMethod> {
     match s {
         "empirical" => Ok(CalibrationMethod::Empirical),
         "binomial" => Ok(CalibrationMethod::Binomial),
+        "crc" => Ok(CalibrationMethod::Crc),
         o => Err(PyValueError::new_err(format!(
-            "Unknown calibration method '{o}'. Valid: empirical, binomial"
+            "Unknown calibration method '{o}'. Valid: empirical, binomial, crc"
         ))),
     }
 }
@@ -177,6 +178,7 @@ fn calibrate(
 
     let threshold_opt = match cal_method {
         CalibrationMethod::Empirical => calibrate_empirical(&curve, error_rate),
+        CalibrationMethod::Crc => calibrate_crc(&curve, error_rate),
         CalibrationMethod::Binomial => {
             let level = confidence_level.ok_or_else(|| {
                 PyValueError::new_err("confidence_level required for binomial method")
