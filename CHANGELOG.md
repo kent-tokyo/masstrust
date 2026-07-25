@@ -11,6 +11,25 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- MassSpecGym benchmark harness provenance hardening (pre-real-run):
+  - `run_baseline.py` now reloads the best (not final-epoch) Lightning checkpoint via
+    `ckpt_path="best"` before exporting val/test predictions, so the recorded
+    `checkpoint_sha256` always matches the weights that actually produced the CSVs.
+  - Exported prediction CSVs gain a `target_inchikey` column (the query's ground-truth
+    molecule); `manifest.json` gains `env_info` (torch/CUDA/cuDNN/GPU/RDKit versions,
+    masstrust git commit), `best_epoch`/`best_val_metric`, and a `requirements.lock.txt` +
+    its sha256, written automatically at the end of every real run.
+  - `masstrust validate-split`: candidate-pool and formula overlap are now stats-only
+    (previously hard failures); a new target-molecule (`target_inchikey`) overlap check —
+    a stronger leakage signal than pool overlap — is reported as a loud warning, not
+    hard-failed. Only `query_id` overlap (the same spectrum in both splits) remains a
+    hard failure. Adds `--out <path>.json` for a machine-readable report.
+  - `masstrust evaluate`: adds `--bootstrap N` for a 95% CI on coverage and risk, a
+    one-sided Wilson upper bound on risk, `target_risk_exceeded`, and an explicit
+    `abstain_reason` when a policy accepts nothing on the evaluation set.
+
+### Added
+
 - Experimental CRC-style threshold calibration (`--method crc`): applies a `1/(n+1)`
   finite-sample correction to the empirical target, inspired by Angelopoulos et al. (2022).
   Assumes i.i.d. calibration data and binary 0/1 annotation loss.  Expressed as experimental;

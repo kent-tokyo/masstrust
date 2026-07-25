@@ -103,19 +103,29 @@ pub fn evaluate_at_threshold(
     method: ScoringMethod,
     threshold: f64,
 ) -> RiskCoverageRow {
-    let entries: Vec<(Option<f64>, bool)> = rankings
+    let entries = labeled_entries(rankings, method);
+    evaluate_entries(&entries, threshold)
+}
+
+/// Build `(confidence, is_correct)` pairs for every labeled query (including unscoreable
+/// ones, whose confidence is `None` — they count toward `total` but are never accepted).
+fn labeled_entries(rankings: &[QueryRanking], method: ScoringMethod) -> Vec<(Option<f64>, bool)> {
+    rankings
         .iter()
         .filter_map(|r| {
             let top1 = r.candidates.iter().min_by_key(|c| c.rank)?;
             let is_correct = top1.is_correct?;
             Some((compute_confidence(r, method), is_correct))
         })
-        .collect();
+        .collect()
+}
 
+/// Apply `threshold` to a pre-built set of `(confidence, is_correct)` entries.
+fn evaluate_entries(entries: &[(Option<f64>, bool)], threshold: f64) -> RiskCoverageRow {
     let total = entries.len();
     let mut accepted = 0usize;
     let mut errors = 0usize;
-    for &(confidence, is_correct) in &entries {
+    for &(confidence, is_correct) in entries {
         if confidence.is_some_and(|c| c.is_finite() && c >= threshold) {
             accepted += 1;
             if !is_correct {
@@ -142,6 +152,57 @@ pub fn evaluate_at_threshold(
     }
 }
 
+/// Bootstrap 95% CIs for the coverage and risk that [`evaluate_at_threshold`] would report,
+/// by resampling labeled queries with replacement.
+///
+/// Returns `(coverage_ci_lo, coverage_ci_hi, risk_ci_lo, risk_ci_hi, risk_ci_n)`. `risk_ci_n`
+/// is how many of the `n_bootstrap` resamples had at least one accepted query and so
+/// contributed a risk value — if it's small relative to `n_bootstrap`, the risk CI is close
+/// to meaningless (most resamples abstained entirely) and should be reported as such.
+/// All four CI bounds are `NaN` if `rankings` has no labeled queries or `n_bootstrap == 0`.
+pub fn bootstrap_evaluate_ci(
+    rankings: &[QueryRanking],
+    method: ScoringMethod,
+    threshold: f64,
+    n_bootstrap: usize,
+    seed: u64,
+) -> (f64, f64, f64, f64, usize) {
+    let entries = labeled_entries(rankings, method);
+    if entries.is_empty() || n_bootstrap == 0 {
+        return (f64::NAN, f64::NAN, f64::NAN, f64::NAN, 0);
+    }
+
+    let mut rng = super::aurc::XorShift64::new(seed);
+    let m = entries.len();
+    let mut coverages = Vec::with_capacity(n_bootstrap);
+    let mut risks = Vec::new();
+    for _ in 0..n_bootstrap {
+        let sample: Vec<(Option<f64>, bool)> =
+            (0..m).map(|_| entries[rng.next() as usize % m]).collect();
+        let row = evaluate_entries(&sample, threshold);
+        coverages.push(row.coverage);
+        if let Some(risk) = row.risk {
+            risks.push(risk);
+        }
+    }
+
+    let percentile = |v: &mut Vec<f64>, p: f64| -> f64 {
+        if v.is_empty() {
+            return f64::NAN;
+        }
+        v.sort_by(f64::total_cmp);
+        v[((p * v.len() as f64) as usize).min(v.len() - 1)]
+    };
+
+    let risk_ci_n = risks.len();
+    let cov_lo = percentile(&mut coverages, 0.025);
+    let cov_hi = percentile(&mut coverages, 0.975);
+    let risk_lo = percentile(&mut risks, 0.025);
+    let risk_hi = percentile(&mut risks, 0.975);
+
+    (cov_lo, cov_hi, risk_lo, risk_hi, risk_ci_n)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +226,7 @@ mod tests {
                     probability: prob,
                     smiles: None,
                     inchikey: None,
+                    target_inchikey: None,
                     formula: None,
                     is_correct,
                     group: None,
@@ -177,6 +239,7 @@ mod tests {
                     probability: prob.map(|p| 1.0 - p),
                     smiles: None,
                     inchikey: None,
+                    target_inchikey: None,
                     formula: None,
                     is_correct: is_correct.map(|b| !b),
                     group: None,
@@ -286,6 +349,7 @@ mod tests {
                 probability: None,
                 smiles: None,
                 inchikey: None,
+                target_inchikey: None,
                 formula: None,
                 is_correct: Some(true),
                 group: None,

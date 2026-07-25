@@ -361,3 +361,137 @@ fn test_validate_split_overlap_exits_1() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("WARNING"));
 }
+
+#[test]
+fn test_validate_split_pool_overlap_only_exits_0() {
+    // Disjoint query_ids (qc1 vs qt1), but candidate "mol_a" recurs in both pools.
+    // Pool overlap alone must not be a hard failure.
+    use std::io::Write;
+    let mut cal = tempfile::NamedTempFile::new().unwrap();
+    write!(
+        cal,
+        "query_id,candidate_id,rank,score\nqc1,mol_a,1,0.9\nqc1,mol_b,2,0.5\n"
+    )
+    .unwrap();
+    let mut tst = tempfile::NamedTempFile::new().unwrap();
+    write!(
+        tst,
+        "query_id,candidate_id,rank,score\nqt1,mol_a,1,0.9\nqt1,mol_c,2,0.5\n"
+    )
+    .unwrap();
+
+    let out = tempfile::NamedTempFile::new().unwrap();
+    let output = Command::new(bin())
+        .args([
+            "validate-split",
+            "--calibration",
+            cal.path().to_str().unwrap(),
+            "--test",
+            tst.path().to_str().unwrap(),
+            "--out",
+            out.path().to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run masstrust");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("candidate pool overlap: 1"));
+    assert!(stdout.contains("No overlap detected"));
+
+    let content = std::fs::read_to_string(out.path()).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(v["query_id_overlap"].as_u64().unwrap(), 0);
+    assert_eq!(v["candidate_pool_overlap"].as_u64().unwrap(), 1);
+    assert!(!v["hard_failure"].as_bool().unwrap());
+}
+
+#[test]
+fn test_evaluate_bootstrap_ci() {
+    let policy_file = tempfile::NamedTempFile::new().unwrap();
+    Command::new(bin())
+        .args([
+            "calibrate",
+            examples_dir()
+                .join("labeled_candidates.csv")
+                .to_str()
+                .unwrap(),
+            "--score",
+            "score-gap",
+            "--error-rate",
+            "0.20",
+            "--method",
+            "empirical",
+            "--out",
+            policy_file.path().to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+
+    let out = tempfile::NamedTempFile::new().unwrap();
+    let status = Command::new(bin())
+        .args([
+            "evaluate",
+            examples_dir()
+                .join("massspecgym_candidates.csv")
+                .to_str()
+                .unwrap(),
+            "--policy",
+            policy_file.path().to_str().unwrap(),
+            "--bootstrap",
+            "200",
+            "--out",
+            out.path().to_str().unwrap(),
+        ])
+        .status()
+        .expect("failed to run masstrust");
+    assert!(status.success());
+
+    let content = std::fs::read_to_string(out.path()).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+    let coverage = v["coverage"].as_f64().unwrap();
+    let lo = v["coverage_ci_lo"].as_f64().unwrap();
+    let hi = v["coverage_ci_hi"].as_f64().unwrap();
+    assert!(
+        lo <= coverage && coverage <= hi,
+        "coverage {coverage} not in [{lo}, {hi}]"
+    );
+    assert!(v["risk_ci_n"].as_u64().unwrap() <= 200);
+}
+
+#[test]
+fn test_evaluate_abstain_all() {
+    use std::io::Write;
+    // A threshold no confidence value can ever reach forces 0 acceptances.
+    let mut policy_file = tempfile::NamedTempFile::new().unwrap();
+    write!(
+        policy_file,
+        r#"{{"version":"0.1.0","scoring_method":"score_gap","threshold":1000000.0,
+            "target_error_rate":0.05,"calibration_method":"empirical",
+            "confidence_level":null,"created_by":"test"}}"#
+    )
+    .unwrap();
+
+    let out = tempfile::NamedTempFile::new().unwrap();
+    let status = Command::new(bin())
+        .args([
+            "evaluate",
+            examples_dir()
+                .join("labeled_candidates.csv")
+                .to_str()
+                .unwrap(),
+            "--policy",
+            policy_file.path().to_str().unwrap(),
+            "--out",
+            out.path().to_str().unwrap(),
+        ])
+        .status()
+        .expect("failed to run masstrust");
+    assert!(status.success());
+
+    let content = std::fs::read_to_string(out.path()).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(v["accepted"].as_u64().unwrap(), 0);
+    assert!(v["abstain_all"].as_bool().unwrap());
+    assert!(v["abstain_reason"].as_str().unwrap().contains("0/"));
+    assert!(v["risk"].is_null());
+}

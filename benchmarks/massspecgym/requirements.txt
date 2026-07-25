@@ -1,7 +1,8 @@
 # Pinned for reproducibility. massspecgym pulls in its own compatible
 # torch/rdkit/torch_geometric/pytorch-lightning transitively (see its own
-# pyproject.toml) — do not re-pin those here, it invites conflicts. Re-freeze
-# this file (`pip freeze > requirements.lock.txt`) after a successful install
-# if you need the full resolved transitive set for exact reproduction.
+# pyproject.toml) — do not re-pin those here, it invites conflicts.
+# `run_baseline.py` writes the full resolved transitive set to
+# requirements.lock.txt (and its hash to manifest.json) automatically at the
+# end of every real run — no manual re-freeze needed.
 massspecgym==1.3.1
 huggingface_hub==0.26.2

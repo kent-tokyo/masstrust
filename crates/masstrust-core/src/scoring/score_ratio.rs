@@ -32,6 +32,7 @@ mod tests {
                 probability: None,
                 smiles: None,
                 inchikey: None,
+                target_inchikey: None,
                 formula: None,
                 is_correct: None,
                 group: None,

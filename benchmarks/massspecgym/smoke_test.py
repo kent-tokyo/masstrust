@@ -46,6 +46,10 @@ def main() -> None:
     print("1. validate_predictions.py accepts the clean fixture...")
     result = run("validate_predictions.py", "--val", str(good_val), "--test", str(good_test))
     assert result.returncode == 0, f"expected success, got:\n{result.stderr}"
+    # Fixtures bake in one deliberately-duplicated target_inchikey (v3/t3) — answer
+    # leakage is warned about, not hard-failed (see validate_split.rs), so this must
+    # still exit 0 while surfacing the warning.
+    assert "ANSWER LEAKAGE" in result.stderr, f"expected leakage warning, got:\n{result.stderr}"
     print("   OK")
 
     with tempfile.TemporaryDirectory() as tmp:

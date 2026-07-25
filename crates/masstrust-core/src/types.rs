@@ -24,6 +24,10 @@ pub struct Candidate {
     pub inchikey: Option<String>,
     /// Optional molecular formula.
     pub formula: Option<String>,
+    /// Optional InChIKey of the query's ground-truth (correct) molecule, if known.
+    /// Distinct from `inchikey` (this candidate's own structure) — used by
+    /// `validate-split` to detect answer-molecule leakage between splits.
+    pub target_inchikey: Option<String>,
     /// Ground-truth label used for calibration and evaluation (`true` = correct annotation).
     pub is_correct: Option<bool>,
     /// Calibration group (e.g. adduct type, instrument).  Not read from CSV automatically;

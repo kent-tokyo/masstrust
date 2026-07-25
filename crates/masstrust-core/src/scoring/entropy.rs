@@ -38,6 +38,7 @@ mod tests {
                 probability: p,
                 smiles: None,
                 inchikey: None,
+                target_inchikey: None,
                 formula: None,
                 is_correct: None,
                 group: None,

@@ -1,12 +1,12 @@
 use crate::types::RiskCoverageRow;
 
 // ── deterministic PRNG (XorShift64) — no external deps ───────────────────
-struct XorShift64(u64);
+pub(crate) struct XorShift64(u64);
 impl XorShift64 {
-    fn new(seed: u64) -> Self {
+    pub(crate) fn new(seed: u64) -> Self {
         Self(seed.max(1))
     }
-    fn next(&mut self) -> u64 {
+    pub(crate) fn next(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;

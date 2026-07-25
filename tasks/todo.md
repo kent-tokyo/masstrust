@@ -50,6 +50,7 @@
 - [x] `masstrust evaluate` — evaluate a fixed policy threshold on separate, labeled held-out data (val-calibrate / test-evaluate, no recalibration on eval data)
 - [x] Fix `compute_eaurc` to return NaN (not a biased κ) when unscoreable queries prevent full coverage
 - [x] `benchmarks/massspecgym/` pipeline scaffolded — `prepare_data.py`, `run_baseline.py`, `validate_predictions.py`, `generate_report.py`, fixtures, `smoke_test.py` (all pass against the tiny fixture)
+- [x] Harden benchmark provenance before the real run: best-checkpoint predictions (was silently using final-epoch weights), target-molecule leakage check, environment lock + run metadata in `manifest.json`, Coverage@Risk CI/Wilson bound in `masstrust evaluate` — see `CHANGELOG.md`
 - [ ] Run the pipeline against the real MassSpecGym dataset (real GPU training + download; see `benchmarks/massspecgym/README.md` — not run yet, out of scope for routine testing)
 
 ### Future / Research

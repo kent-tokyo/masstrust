@@ -21,6 +21,20 @@ fn wilson_upper(errors: usize, accepted: usize, z: f64) -> f64 {
         / (1.0 + z2 / n)
 }
 
+/// One-sided Wilson upper confidence bound on an observed error rate
+/// (`errors` out of `accepted` trials).
+///
+/// `confidence_level` must be one of `0.90`, `0.95`, `0.975`, or `0.99`.
+/// Returns [`MasstrustError::UnsupportedConfidenceLevel`] for any other value.
+pub fn wilson_upper_bound(
+    errors: usize,
+    accepted: usize,
+    confidence_level: f64,
+) -> Result<f64, MasstrustError> {
+    let z = z_for_confidence_level(confidence_level)?;
+    Ok(wilson_upper(errors, accepted, z))
+}
+
 /// Select the threshold that maximises coverage while keeping the **one-sided Wilson
 /// upper confidence bound on the error rate ≤ `target`**.
 ///

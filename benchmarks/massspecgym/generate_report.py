@@ -85,6 +85,25 @@ def unscoreable_rate(curve_rows: list[dict]) -> float:
     return 1.0 - (int(last["accepted"]) / total)
 
 
+def run_validate_split(masstrust: str, val_csv: Path, test_csv: Path, out_dir: Path):
+    # Not a gate here (validate_predictions.py already gates the pipeline before this
+    # script runs) — just captures the leakage stats for the report. `--out` is written
+    # by `masstrust validate-split` even on its hard-failure exit(1) path, so the stats
+    # survive either way.
+    out_json = out_dir / "validate_split.json"
+    subprocess.run(
+        [
+            masstrust, "validate-split",
+            "--calibration", str(val_csv),
+            "--test", str(test_csv),
+            "--out", str(out_json),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(out_json.read_text()) if out_json.exists() else None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--val", type=Path, required=True)
@@ -154,6 +173,7 @@ def main() -> None:
                 [
                     masstrust, "evaluate", str(args.test),
                     "--policy", str(policy_json),
+                    "--bootstrap", str(args.bootstrap),
                     "--out", str(eval_json),
                 ]
             )
@@ -171,9 +191,20 @@ def main() -> None:
                     "aurc_ci_hi": cmp_row.get("aurc_ci_hi", ""),
                     "unscoreable_rate": unscoreable,
                     "test_coverage_achieved": eval_result["coverage"],
+                    "test_coverage_ci_lo": eval_result.get("coverage_ci_lo"),
+                    "test_coverage_ci_hi": eval_result.get("coverage_ci_hi"),
                     "test_risk_achieved": eval_result["risk"],
+                    "test_risk_ci_lo": eval_result.get("risk_ci_lo"),
+                    "test_risk_ci_hi": eval_result.get("risk_ci_hi"),
+                    "test_risk_ci_n": eval_result.get("risk_ci_n"),
+                    "test_risk_wilson_upper": eval_result.get("risk_wilson_upper"),
+                    "wilson_confidence_level": eval_result.get("wilson_confidence_level"),
+                    "target_risk_exceeded": eval_result.get("target_risk_exceeded"),
                     "test_accepted": eval_result["accepted"],
                     "test_total": eval_result["total"],
+                    "test_errors": eval_result["errors"],
+                    "abstain_all": eval_result.get("abstain_all", False),
+                    "abstain_reason": eval_result.get("abstain_reason"),
                 }
             )
 
@@ -184,8 +215,27 @@ def main() -> None:
         writer.writerows(rows_out)
 
     acc = top1_accuracy(args.test)
+    # headline is looked up fresh from rows_out (not the loop's leftover `eval_result`,
+    # which after the loops end holds whatever ran last — e.g. candidate-count@0.10) so
+    # the printed coverage/risk numbers and their CIs always come from the same
+    # score-gap@5% row.
     headline = next(
         r for r in rows_out if r["method"] == PRIMARY_METHOD and r["target_risk"] == PRIMARY_RISK
+    )
+
+    leakage = run_validate_split(masstrust, args.val, args.test, args.out_dir)
+
+    def _ci(lo, hi, decimals=4):
+        if lo is None or hi is None:
+            return ""
+        return f" (95% CI [{lo:.{decimals}f}, {hi:.{decimals}f}])"
+
+    headline_coverage_ci = _ci(headline["test_coverage_ci_lo"], headline["test_coverage_ci_hi"])
+    headline_risk_wilson = (
+        f" (Wilson {headline['wilson_confidence_level'] * 100:.0f}% upper bound: "
+        f"{headline['test_risk_wilson_upper']:.4f})"
+        if headline.get("test_risk_wilson_upper") is not None
+        else ""
     )
 
     report_md = args.out_dir / "report.md"
@@ -200,11 +250,43 @@ def main() -> None:
         f"- seed: {manifest.get('seed', 'unknown')}",
         f"- top-1 accuracy (test, all queries): {acc:.4f}",
         "",
+        "**Caveat:** the best checkpoint is selected by a *validation* metric, and the "
+        "masstrust threshold is then calibrated on that same val fold — val confidence "
+        "scores are therefore mildly optimistic relative to test. This is the standard "
+        "protocol (matching upstream MassSpecGym), not a bug, but worth keeping in mind "
+        "if test risk overshoots the target below.",
+        "",
         "## Headline: Coverage@Risk-5% (score-gap)",
         "",
-        f"- coverage achieved on test: {headline['test_coverage_achieved']}",
-        f"- risk achieved on test: {headline['test_risk_achieved']}",
-        f"- ({headline['test_accepted']}/{headline['test_total']} accepted)",
+        f"- coverage achieved on test: {headline['test_coverage_achieved']}{headline_coverage_ci}",
+        f"- risk achieved on test: {headline['test_risk_achieved']}{headline_risk_wilson}",
+        f"- target risk exceeded: {headline.get('target_risk_exceeded')}",
+        f"- accepted: {headline['test_accepted']}/{headline['test_total']}, "
+        f"errors: {headline['test_errors']}",
+    ]
+    if headline.get("abstain_all"):
+        lines.append(f"- **ABSTAIN-ALL:** {headline.get('abstain_reason')}")
+    lines += [
+        "",
+        "## Leakage checks",
+        "",
+    ]
+    if leakage:
+        lines += [
+            f"- query_id overlap: {leakage['query_id_overlap']} / {leakage['n_test_queries']} "
+            f"test queries ({leakage['query_id_overlap_pct']:.1f}%) — "
+            f"{'HARD FAILURE' if leakage['hard_failure'] else 'none'}",
+            f"- candidate pool overlap: {leakage['candidate_pool_overlap']} unique structures "
+            "(stats only, not leakage by itself)",
+            f"- formula overlap: {leakage['formula_overlap']} unique formulas "
+            "(stats only, not leakage by itself)",
+            f"- target-molecule overlap: {leakage['target_inchikey_overlap']} exact / "
+            f"{leakage['target_inchikey_skeleton_overlap']} by 2D skeleton "
+            "(reported, not hard-failed — see README)",
+        ]
+    else:
+        lines.append("- `masstrust validate-split` did not produce a report; see stderr.")
+    lines += [
         "",
         "## Full comparison",
         "",

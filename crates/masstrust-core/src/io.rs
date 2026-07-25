@@ -95,6 +95,7 @@ fn read_candidates_parquet(path: &Path) -> Result<Vec<Candidate>, MasstrustError
     let smiles = opt_str!("smiles");
     let inchikeys = opt_str!("inchikey");
     let formulas = opt_str!("formula");
+    let target_inchikeys = opt_str!("target_inchikey");
     let is_corrects = opt_str!("is_correct");
 
     let n = df.height();
@@ -133,6 +134,10 @@ fn read_candidates_parquet(path: &Path) -> Result<Vec<Candidate>, MasstrustError
                 .and_then(|ca| ca.get(i))
                 .map(str::to_string),
             formula: formulas
+                .as_ref()
+                .and_then(|ca| ca.get(i))
+                .map(str::to_string),
+            target_inchikey: target_inchikeys
                 .as_ref()
                 .and_then(|ca| ca.get(i))
                 .map(str::to_string),
@@ -264,6 +269,7 @@ mod tests {
                 probability: None,
                 smiles: None,
                 inchikey: None,
+                target_inchikey: None,
                 formula: None,
                 is_correct: None,
                 group: None,
@@ -276,6 +282,7 @@ mod tests {
                 probability: None,
                 smiles: None,
                 inchikey: None,
+                target_inchikey: None,
                 formula: None,
                 is_correct: None,
                 group: None,

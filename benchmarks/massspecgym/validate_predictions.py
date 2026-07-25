@@ -91,8 +91,11 @@ def main() -> None:
         capture_output=True,
         text=True,
     )
+    # Always surface masstrust's own leakage stats (pool/formula/target-overlap warnings
+    # included) — not just on hard failure, otherwise they're silently discarded here.
+    print(result.stdout, end="", file=sys.stderr)
     if result.returncode != 0:
-        errors.append(f"masstrust validate-split failed:\n{result.stdout}{result.stderr}")
+        errors.append(f"masstrust validate-split failed:\n{result.stderr}")
 
     if errors:
         print("VALIDATION FAILED:", file=sys.stderr)
