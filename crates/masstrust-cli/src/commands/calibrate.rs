@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use clap::Args;
-use masstrust_core::{calibration::calibrate_grouped, io, metrics, PolicyFile};
+use masstrust_core::{PolicyFile, calibration::calibrate_grouped, io, metrics};
 
 use super::{calibrate_curve, parse_calibration_method, parse_scoring_method};
 
@@ -139,7 +139,7 @@ fn print_calibration_report(
     if let Some(gt) = &policy.group_thresholds {
         let mut groups: Vec<_> = gt.iter().collect();
         groups.sort_by_key(|(k, _)| k.as_str());
-        for (group, &threshold) in &groups {
+        for &(ref group, &threshold) in &groups {
             eprintln!("  [{group}] threshold: {threshold:.6}");
         }
     }
@@ -152,14 +152,14 @@ fn print_calibration_report(
     }
 
     eprintln!("  global threshold:  {:.6}", policy.threshold);
-    if policy.calibration_method == masstrust_core::CalibrationMethod::Crc {
-        if let Some(row) = curve.last() {
-            let correction = 1.0 / (row.total as f64 + 1.0);
-            eprintln!(
-                "  CRC correction:    {correction:.6}  (1/(n+1), n={total})",
-                total = row.total
-            );
-        }
+    if policy.calibration_method == masstrust_core::CalibrationMethod::Crc
+        && let Some(row) = curve.last()
+    {
+        let correction = 1.0 / (row.total as f64 + 1.0);
+        eprintln!(
+            "  CRC correction:    {correction:.6}  (1/(n+1), n={total})",
+            total = row.total
+        );
     }
 
     if let Some(row) = curve.iter().find(|r| r.threshold == policy.threshold) {

@@ -24,6 +24,8 @@ pub enum MasstrustError {
     EmptyInput,
     #[error("Parquet error: {0}")]
     Parquet(String),
-    #[error("Parquet input detected but masstrust was compiled without the 'parquet' feature; recompile with --features parquet")]
+    #[error(
+        "Parquet input detected but masstrust was compiled without the 'parquet' feature; recompile with --features parquet"
+    )]
     ParquetNotEnabled,
 }

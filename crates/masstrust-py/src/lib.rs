@@ -1,8 +1,9 @@
 use std::path::Path;
 
 use masstrust_core::{
+    CalibrationMethod, PolicyFile, ScoringMethod,
     calibration::{calibrate_binomial, calibrate_crc, calibrate_empirical},
-    io, metrics, policy, CalibrationMethod, PolicyFile, ScoringMethod,
+    io, metrics, policy,
 };
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -41,7 +42,7 @@ fn parse_cal(s: &str) -> PyResult<CalibrationMethod> {
 }
 
 fn policy_to_dict<'py>(py: Python<'py>, pf: &PolicyFile) -> PyResult<Bound<'py, PyDict>> {
-    let d = PyDict::new_bound(py);
+    let d = PyDict::new(py);
     d.set_item("version", &pf.version)?;
     let scoring_json = serde_json::to_value(&pf.scoring_method).map_err(map_err)?;
     d.set_item("scoring_method", scoring_json.as_str().unwrap_or(""))?;
@@ -100,9 +101,9 @@ fn compute_curve(py: Python<'_>, csv_path: &str, score: &str) -> PyResult<Py<PyL
     let rankings = io::group_by_query(candidates);
     let curve = metrics::compute_curve(&rankings, method);
 
-    let list = PyList::empty_bound(py);
+    let list = PyList::empty(py);
     for row in &curve {
-        let d = PyDict::new_bound(py);
+        let d = PyDict::new(py);
         d.set_item("threshold", row.threshold)?;
         d.set_item("accepted", row.accepted)?;
         d.set_item("total", row.total)?;
@@ -134,7 +135,7 @@ fn py_list_to_curve(
 ) -> PyResult<Vec<masstrust_core::RiskCoverageRow>> {
     list.iter()
         .map(|item| {
-            let d = item.downcast::<PyDict>()?;
+            let d = item.cast::<PyDict>()?;
             Ok(masstrust_core::RiskCoverageRow {
                 threshold: d
                     .get_item("threshold")?
@@ -223,9 +224,9 @@ fn apply_policy(
     let rankings = io::group_by_query(candidates);
     let decisions = policy::apply_policy(&rankings, &pf);
 
-    let list = PyList::empty_bound(py);
+    let list = PyList::empty(py);
     for d in &decisions {
-        let dict = PyDict::new_bound(py);
+        let dict = PyDict::new(py);
         dict.set_item("query_id", &d.query_id)?;
         dict.set_item("candidate_id", &d.candidate_id)?;
         dict.set_item("confidence", d.confidence)?;

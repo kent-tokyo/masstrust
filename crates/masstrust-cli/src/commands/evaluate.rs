@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::bail;
 use clap::Args;
-use masstrust_core::{calibration, io, metrics, policy, PolicyFile};
+use masstrust_core::{PolicyFile, calibration, io, metrics, policy};
 use serde::Serialize;
 
 #[derive(Args)]

@@ -9,8 +9,8 @@ pub mod validate_split;
 
 use anyhow::bail;
 use masstrust_core::{
-    calibration::{calibrate_binomial, calibrate_crc, calibrate_empirical},
     CalibrationMethod, RiskCoverageRow, ScoringMethod,
+    calibration::{calibrate_binomial, calibrate_crc, calibrate_empirical},
 };
 
 pub fn parse_scoring_method(s: &str) -> anyhow::Result<ScoringMethod> {

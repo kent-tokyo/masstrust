@@ -4,7 +4,10 @@ pub fn score(ranking: &QueryRanking) -> Option<f64> {
     let probs: Option<Vec<f64>> = ranking.candidates.iter().map(|c| c.probability).collect();
     let probs = probs?;
     // H in nats: zero probability contributes 0 (matching entropy.rs convention)
-    let h: f64 = probs.iter().map(|&p| if p == 0.0 { 0.0 } else { -p * p.ln() }).sum();
+    let h: f64 = probs
+        .iter()
+        .map(|&p| if p == 0.0 { 0.0 } else { -p * p.ln() })
+        .sum();
     // exp(-H) = 1/effective_k; single candidate → H=0 → 1.0; uniform n → 1/n
     let result = (-h).exp();
     result.is_finite().then_some(result)
@@ -33,7 +36,10 @@ mod tests {
                 group: None,
             })
             .collect();
-        QueryRanking { query_id: "q".into(), candidates }
+        QueryRanking {
+            query_id: "q".into(),
+            candidates,
+        }
     }
 
     #[test]

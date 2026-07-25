@@ -38,7 +38,10 @@ mod tests {
                 group: None,
             })
             .collect();
-        QueryRanking { query_id: "q".into(), candidates }
+        QueryRanking {
+            query_id: "q".into(),
+            candidates,
+        }
     }
 
     #[test]

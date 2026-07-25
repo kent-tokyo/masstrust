@@ -3,11 +3,7 @@ use crate::types::QueryRanking;
 pub fn score(ranking: &QueryRanking) -> Option<f64> {
     let top1 = ranking.candidates.iter().min_by_key(|c| c.rank)?;
     let p = top1.probability?;
-    if p.is_nan() {
-        None
-    } else {
-        Some(p)
-    }
+    if p.is_nan() { None } else { Some(p) }
 }
 
 #[cfg(test)]

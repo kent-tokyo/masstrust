@@ -142,6 +142,9 @@ fn read_candidates_parquet(path: &Path) -> Result<Vec<Candidate>, MasstrustError
                 .and_then(|ca| ca.get(i))
                 .map(str::to_string),
             is_correct,
+            // Not read from Parquet, same as the CSV path — populated afterward via
+            // `read_group_column` if grouped calibration is requested.
+            group: None,
         });
     }
     Ok(candidates)

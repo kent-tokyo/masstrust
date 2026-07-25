@@ -1,8 +1,9 @@
 use std::path::Path;
 
 use masstrust_core::{
+    ScoringMethod,
     calibration::{calibrate_binomial, calibrate_empirical},
-    io, metrics, policy, ScoringMethod,
+    io, metrics, policy,
 };
 
 fn labeled_csv() -> &'static Path {
@@ -69,7 +70,7 @@ fn test_apply_unlabeled() {
     let rankings = io::group_by_query(candidates);
     let decisions = policy::apply_policy(&rankings, &policy);
     assert_eq!(decisions.len(), 2); // q5, q6
-                                    // q5: gap = 0.90 - 0.70 = 0.20 >= 0.1 → accepted
+    // q5: gap = 0.90 - 0.70 = 0.20 >= 0.1 → accepted
     assert!(
         decisions
             .iter()
