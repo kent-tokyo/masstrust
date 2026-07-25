@@ -88,6 +88,36 @@ masstrust batch data/*.csv \
   --out-dir ./results/
 ```
 
+**複数のスコアリング方法を比較**（1つのラベル付きデータセット上で）：
+
+```bash
+masstrust compare examples/labeled_candidates.csv \
+  --scores score-gap,score-ratio,topk-gap,candidate-count \
+  --error-rate 0.05 --method empirical \
+  --bootstrap 1000 \
+  --out compare.csv
+```
+
+**別のホールドアウトデータでポリシーを評価** — 一方のセット（例：検証用）でキャリブレーションし、再キャリブレーションせずにもう一方（例：テスト用）で評価：
+
+```bash
+masstrust calibrate val.csv --score score-gap --error-rate 0.05 --method empirical --out policy.json
+masstrust evaluate test.csv --policy policy.json --out eval_report.json
+```
+
+**キャリブレーションデータと新データ間の信頼度ドリフトを検出**：
+
+```bash
+masstrust drift --calibration examples/labeled_candidates.csv --new examples/candidates.csv \
+  --score score-gap --out drift_report.json
+```
+
+**キャリブレーション/テストデータのリーク（漏洩）を防止**（`query_id`/`inchikey`/`formula` の重複チェック）：
+
+```bash
+masstrust validate-split --calibration val.csv --test test.csv
+```
+
 ### 実行結果の例
 
 ```
@@ -173,6 +203,8 @@ q2,cand_d,2,0.86,0.43,true
 
 `--features parquet` オプションで Parquet 形式の入力も対応（`.parquet` 拡張子で自動検出）。
 
+`curve` や `compare` に `--bootstrap 1000` を追加すると、AURC の 95% ブートストラップ信頼区間が得られます。
+
 ---
 
 ## 信頼スコアリング方法
@@ -180,9 +212,13 @@ q2,cand_d,2,0.86,0.43,true
 | 方法 | 計算式 | 必要条件 |
 |------|--------|---------|
 | `score-gap` | `score(1位) − score(2位)` | 候補が2件以上 |
+| `score-ratio` | `score(1位) / score(2位)` | 候補が2件以上、`score(2位) > 0` |
+| `topk-gap` | `score(1位) − mean(score(2位..min(5,n)位))` | 候補が2件以上 |
+| `candidate-count` | `1 / 候補数` | なし（常にスコア計算可能） |
 | `max-prob` | `probability(1位)` | `probability` 列 |
 | `margin` | `probability(1位) − probability(2位)` | `probability` 列、候補が2件以上 |
 | `entropy` | `1 − H_normalized`（全候補の確率に対するエントロピー） | 全候補の `probability` 列 |
+| `effective-k` | `exp(−H)`（全候補の確率に対するエントロピー） | 全候補の `probability` 列 |
 
 ---
 
@@ -247,6 +283,12 @@ masstrust calibrate labeled.csv --score score-gap --error-rate 0.05 --method crc
   "created_by": "masstrust"
 }
 ```
+
+---
+
+## MassSpecGym でのベンチマーク
+
+`benchmarks/massspecgym/` は（Rust ワークスペースから独立した）自己完結的なパイプラインで、`massspecgym`/torch/rdkit に依存します。公式の Fingerprint FFN 検索ベースラインを学習し、その予測を masstrust のスキーマでエクスポートし、実際の MassSpecGym データ上で masstrust 自身のスコアリング方法の AURC / E-AURC / リスク目標時のカバレッジを報告します。これは競合ツールとの比較に先立って、実データによる再現可能なベンチマークを確立するためのものであり、現時点では競合比較は行っていません。詳細な手順は `benchmarks/massspecgym/README.md` を参照してください。
 
 ---
 

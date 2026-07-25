@@ -88,6 +88,36 @@ masstrust batch data/*.csv \
   --out-dir ./results/
 ```
 
+**Compare multiple scoring methods** on one labeled dataset:
+
+```bash
+masstrust compare examples/labeled_candidates.csv \
+  --scores score-gap,score-ratio,topk-gap,candidate-count \
+  --error-rate 0.05 --method empirical \
+  --bootstrap 1000 \
+  --out compare.csv
+```
+
+**Evaluate a policy on separate held-out data** — calibrate on one set (e.g. validation), evaluate on another (e.g. test) without recalibrating:
+
+```bash
+masstrust calibrate val.csv --score score-gap --error-rate 0.05 --method empirical --out policy.json
+masstrust evaluate test.csv --policy policy.json --out eval_report.json
+```
+
+**Detect confidence drift** between calibration and new data:
+
+```bash
+masstrust drift --calibration examples/labeled_candidates.csv --new examples/candidates.csv \
+  --score score-gap --out drift_report.json
+```
+
+**Guard against calibration/test leakage** (`query_id`/`inchikey`/`formula` overlap):
+
+```bash
+masstrust validate-split --calibration val.csv --test test.csv
+```
+
 ### Sample output
 
 ```
@@ -173,6 +203,8 @@ q2,cand_d,2,0.86,0.43,true
 
 Parquet input is supported with `--features parquet` (auto-detected by `.parquet` extension).
 
+Add `--bootstrap 1000` to `curve` or `compare` for a bootstrap 95% confidence interval on AURC.
+
 ---
 
 ## Confidence scoring methods
@@ -180,9 +212,13 @@ Parquet input is supported with `--features parquet` (auto-detected by `.parquet
 | Method | Formula | Requires |
 |--------|---------|---------|
 | `score-gap` | `score(rank-1) − score(rank-2)` | ≥2 candidates |
+| `score-ratio` | `score(rank-1) / score(rank-2)` | ≥2 candidates, `score(rank-2) > 0` |
+| `topk-gap` | `score(rank-1) − mean(score(rank-2..min(5,n)))` | ≥2 candidates |
+| `candidate-count` | `1 / n_candidates` | none — always scoreable |
 | `max-prob` | `probability(rank-1)` | `probability` column |
 | `margin` | `probability(rank-1) − probability(rank-2)` | `probability`, ≥2 candidates |
 | `entropy` | `1 − H_normalized` over all candidate probabilities | `probability` for all candidates |
+| `effective-k` | `exp(−H)` over all candidate probabilities | `probability` for all candidates |
 
 ---
 
@@ -247,6 +283,12 @@ A calibrated policy is saved as a reproducible JSON file:
   "created_by": "masstrust"
 }
 ```
+
+---
+
+## Benchmarking on MassSpecGym
+
+`benchmarks/massspecgym/` is a self-contained pipeline (kept out of the Rust workspace — it depends on `massspecgym`/torch/rdkit) that trains the official Fingerprint FFN retrieval baseline, exports its predictions in masstrust's schema, and reports masstrust's own scoring methods' AURC/E-AURC/coverage-at-risk on real MassSpecGym data. This establishes a real, reproducible benchmark before any competitor comparison — none is claimed yet. See `benchmarks/massspecgym/README.md` for the full protocol.
 
 ---
 

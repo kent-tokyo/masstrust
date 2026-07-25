@@ -88,6 +88,36 @@ masstrust batch data/*.csv \
   --out-dir ./results/
 ```
 
+**比较多种评分方法**（在同一个带标签数据集上）：
+
+```bash
+masstrust compare examples/labeled_candidates.csv \
+  --scores score-gap,score-ratio,topk-gap,candidate-count \
+  --error-rate 0.05 --method empirical \
+  --bootstrap 1000 \
+  --out compare.csv
+```
+
+**在独立的留出数据上评估策略** — 在一个数据集（如验证集）上校准，在另一个数据集（如测试集）上评估，且不重新校准：
+
+```bash
+masstrust calibrate val.csv --score score-gap --error-rate 0.05 --method empirical --out policy.json
+masstrust evaluate test.csv --policy policy.json --out eval_report.json
+```
+
+**检测校准数据与新数据之间的置信度漂移**：
+
+```bash
+masstrust drift --calibration examples/labeled_candidates.csv --new examples/candidates.csv \
+  --score score-gap --out drift_report.json
+```
+
+**防止校准集/测试集之间的数据泄漏**（`query_id`/`inchikey`/`formula` 重叠检测）：
+
+```bash
+masstrust validate-split --calibration val.csv --test test.csv
+```
+
 ### 示例输出
 
 ```
@@ -173,6 +203,8 @@ q2,cand_d,2,0.86,0.43,true
 
 通过 `--features parquet` 支持 Parquet 格式输入（按 `.parquet` 扩展名自动检测）。
 
+在 `curve` 或 `compare` 上添加 `--bootstrap 1000` 可获得 AURC 的 95% 自助法（bootstrap）置信区间。
+
 ---
 
 ## 置信度评分方法
@@ -180,9 +212,13 @@ q2,cand_d,2,0.86,0.43,true
 | 方法 | 计算公式 | 所需条件 |
 |------|---------|---------|
 | `score-gap` | `score(第1位) − score(第2位)` | ≥2 个候选 |
+| `score-ratio` | `score(第1位) / score(第2位)` | ≥2 个候选，`score(第2位) > 0` |
+| `topk-gap` | `score(第1位) − mean(score(第2..min(5,n)位))` | ≥2 个候选 |
+| `candidate-count` | `1 / 候选数` | 无——始终可计算 |
 | `max-prob` | `probability(第1位)` | `probability` 列 |
 | `margin` | `probability(第1位) − probability(第2位)` | `probability` 列，≥2 个候选 |
 | `entropy` | `1 − H_normalized`（所有候选概率的归一化熵） | 所有候选的 `probability` 列 |
+| `effective-k` | `exp(−H)`（所有候选概率的熵） | 所有候选的 `probability` 列 |
 
 ---
 
@@ -247,6 +283,12 @@ masstrust calibrate labeled.csv --score score-gap --error-rate 0.05 --method crc
   "created_by": "masstrust"
 }
 ```
+
+---
+
+## 在 MassSpecGym 上进行基准测试
+
+`benchmarks/massspecgym/` 是一个独立于 Rust 工作区之外的自包含流水线（依赖 `massspecgym`/torch/rdkit），用于训练官方的 Fingerprint FFN 检索基线模型，将其预测结果导出为 masstrust 的数据格式，并报告 masstrust 自身评分方法在真实 MassSpecGym 数据上的 AURC / E-AURC / 目标风险下的覆盖率。这是在与竞品比较之前，建立一个真实、可复现的基准——目前尚未声称与任何竞品进行了比较。完整流程见 `benchmarks/massspecgym/README.md`。
 
 ---
 

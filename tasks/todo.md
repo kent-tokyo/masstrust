@@ -49,15 +49,17 @@
 ### v0.4.0 — Benchmark harness (in progress)
 - [x] `masstrust evaluate` — evaluate a fixed policy threshold on separate, labeled held-out data (val-calibrate / test-evaluate, no recalibration on eval data)
 - [x] Fix `compute_eaurc` to return NaN (not a biased κ) when unscoreable queries prevent full coverage
-- [ ] `benchmarks/massspecgym/` — reproducible Python pipeline: official MassSpecGym baseline retrieval predictions, validator, benchmark report (see plan doc)
+- [x] `benchmarks/massspecgym/` pipeline scaffolded — `prepare_data.py`, `run_baseline.py`, `validate_predictions.py`, `generate_report.py`, fixtures, `smoke_test.py` (all pass against the tiny fixture)
+- [ ] Run the pipeline against the real MassSpecGym dataset (real GPU training + download; see `benchmarks/massspecgym/README.md` — not run yet, out of scope for routine testing)
 
 ### Future / Research
-- [ ] Validate CRC calibration on public MS/MS benchmarks (MassSpecGym)
+- [ ] Validate CRC calibration on public MS/MS benchmarks (MassSpecGym) — pending the real-dataset run above
 - [ ] Grouped calibration: additional examples and docs
 - [ ] Calibration drift detection: group distribution shift (adduct, ion_mode)
-- [ ] E-AURC when unscoreable queries present (currently returns NaN)
 - [ ] Conformal risk control with non-binary loss (monotone loss formulation)
 - [ ] Grouped calibration by compound class (requires chemical taxonomy lookup)
+- [ ] Probability calibration (temperature scaling) so max-prob/margin/entropy/effective-k can be benchmarked on MassSpecGym too
+- [ ] Competitor comparison (Selective-MSMS, ms-cp, COSMIC/SIRIUS) — deliberately deferred; see benchmark harness README for the column contract that will allow this without core changes
 
 ## Backlog / Low Priority
 - [ ] `masstrust-plot` separate crate (as noted in AGENTS.md)
