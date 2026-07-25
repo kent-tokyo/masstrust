@@ -51,7 +51,8 @@
 - [x] Fix `compute_eaurc` to return NaN (not a biased κ) when unscoreable queries prevent full coverage
 - [x] `benchmarks/massspecgym/` pipeline scaffolded — `prepare_data.py`, `run_baseline.py`, `validate_predictions.py`, `generate_report.py`, fixtures, `smoke_test.py` (all pass against the tiny fixture)
 - [x] Harden benchmark provenance before the real run: best-checkpoint predictions (was silently using final-epoch weights), target-molecule leakage check, environment lock + run metadata in `manifest.json`, Coverage@Risk CI/Wilson bound in `masstrust evaluate` — see `CHANGELOG.md`
-- [ ] Run the pipeline against the real MassSpecGym dataset (real GPU training + download; see `benchmarks/massspecgym/README.md` — not run yet, out of scope for routine testing)
+- [x] Real-data preflight completed on MassSpecGym — full pipeline (download → train → best-checkpoint reload → CSV export → validate-split → report) verified end to end against the pinned dataset revision; found and fixed 5 real bugs along the way (`load_massspecgym()` API mismatch, `huggingface_hub` pin conflict, `setuptools`/`pkg_resources`, a confirmed upstream massspecgym `RetrievalDataset`/`FingerprintFFNRetrieval` bug worked around locally, `is_correct` CSV casing) — see commits `27fb73f`/`a1072f9`. Preflight numbers themselves are meaningless (2 batches/1 epoch) and are not recorded here.
+- [ ] Official seed-0 benchmark run: 50 epochs (real GPU training; see `benchmarks/massspecgym/README.md`) — not started yet, review the preflight report/manifest first
 
 ### Future / Research
 - [ ] Validate CRC calibration on public MS/MS benchmarks (MassSpecGym) — pending the real-dataset run above
