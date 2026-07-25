@@ -44,6 +44,38 @@ from pathlib import Path
 
 import config
 
+# Deferred to module level (not inside main()) so _RetrievalDatasetWithCandidates
+# below is a real module-level class: DataLoader(num_workers>0) must serialize
+# the dataset to hand it to worker subprocesses, and Python's default serializer
+# can't handle a class defined inside a function (confirmed: a real
+# --num-workers 4 run failed with "Can't ... local object
+# 'main.<locals>._RetrievalDatasetWithCandidates'" — --num-workers 0, used
+# throughout preflight, never spawns workers and so never needed this, which is
+# why it went uncaught until the real run). The friendly "missing dependency"
+# message is still shown, just from main() instead of at import time, via
+# _IMPORT_ERROR below.
+try:
+    import pytorch_lightning as pl
+    from huggingface_hub import hf_hub_download
+    from massspecgym.data.data_module import MassSpecDataModule
+    from massspecgym.data.datasets import RetrievalDataset
+    from massspecgym.data.transforms import MolFingerprinter, MolToInChIKey, SpecBinner
+    from massspecgym.models.retrieval import fingerprint_ffn as fingerprint_ffn_module
+
+    _IMPORT_ERROR = None
+except ImportError as e:
+    _IMPORT_ERROR = e
+    RetrievalDataset = object  # placeholder base so the class body below still parses
+
+
+class _RetrievalDatasetWithCandidates(RetrievalDataset):
+    # Workaround for massspecgym==1.3.1's RetrievalDataset/FingerprintFFNRetrieval
+    # mismatch — see the module docstring above for the full explanation.
+    def __getitem__(self, i):
+        item = super().__getitem__(i)
+        item["candidates"] = item["candidates_mol"]
+        return item
+
 
 def sha256_of(path: Path) -> str:
     h = hashlib.sha256()
@@ -218,27 +250,12 @@ def main() -> None:
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        import pytorch_lightning as pl
-        from huggingface_hub import hf_hub_download
-        from massspecgym.data.data_module import MassSpecDataModule
-        from massspecgym.data.datasets import RetrievalDataset
-        from massspecgym.data.transforms import MolFingerprinter, MolToInChIKey, SpecBinner
-        from massspecgym.models.retrieval import fingerprint_ffn as fingerprint_ffn_module
-    except ImportError as e:
-        sys.exit(f"Missing dependency ({e}). Install with:\n  pip install -r requirements.txt")
+    if _IMPORT_ERROR is not None:
+        sys.exit(f"Missing dependency ({_IMPORT_ERROR}). Install with:\n  pip install -r requirements.txt")
 
     # Aliased (not called as `...Retrieval(`) only to dodge an overly broad
     # substring-based `eval(` lint in this environment; there is no eval() here.
     fingerprint_ffn_cls = fingerprint_ffn_module.FingerprintFFNRetrieval
-
-    class _RetrievalDatasetWithCandidates(RetrievalDataset):
-        # Workaround for massspecgym==1.3.1's RetrievalDataset/FingerprintFFNRetrieval
-        # mismatch — see the module docstring above for the full explanation.
-        def __getitem__(self, i):
-            item = super().__getitem__(i)
-            item["candidates"] = item["candidates_mol"]
-            return item
 
     pl.seed_everything(args.seed)
 
