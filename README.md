@@ -288,7 +288,9 @@ A calibrated policy is saved as a reproducible JSON file:
 
 ## Benchmarking on MassSpecGym
 
-`benchmarks/massspecgym/` is a self-contained pipeline (kept out of the Rust workspace — it depends on `massspecgym`/torch/rdkit) that trains the official Fingerprint FFN retrieval baseline, exports its predictions in masstrust's schema, and reports masstrust's own scoring methods' AURC/E-AURC/coverage-at-risk on real MassSpecGym data. This establishes a real, reproducible benchmark before any competitor comparison — none is claimed yet. See `benchmarks/massspecgym/README.md` for the full protocol.
+`benchmarks/massspecgym/` is a self-contained pipeline (kept out of the Rust workspace — it depends on `massspecgym`/torch/rdkit) that trains the official Fingerprint FFN retrieval baseline, exports its predictions in masstrust's schema, and reports masstrust's own scoring methods' AURC/E-AURC/coverage-at-risk on real MassSpecGym data. This establishes a real, reproducible benchmark before any competitor comparison — none is claimed yet.
+
+The harness has been validated end to end against real data via a small-scale preflight run (download → train → checkpoint → predictions → report), which found and fixed several real integration bugs along the way. The full benchmark run is not complete yet — no results are published. See `benchmarks/massspecgym/README.md` for the full protocol and current status.
 
 ---
 

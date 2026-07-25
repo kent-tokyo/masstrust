@@ -288,7 +288,9 @@ masstrust calibrate labeled.csv --score score-gap --error-rate 0.05 --method crc
 
 ## MassSpecGym でのベンチマーク
 
-`benchmarks/massspecgym/` は（Rust ワークスペースから独立した）自己完結的なパイプラインで、`massspecgym`/torch/rdkit に依存します。公式の Fingerprint FFN 検索ベースラインを学習し、その予測を masstrust のスキーマでエクスポートし、実際の MassSpecGym データ上で masstrust 自身のスコアリング方法の AURC / E-AURC / リスク目標時のカバレッジを報告します。これは競合ツールとの比較に先立って、実データによる再現可能なベンチマークを確立するためのものであり、現時点では競合比較は行っていません。詳細な手順は `benchmarks/massspecgym/README.md` を参照してください。
+`benchmarks/massspecgym/` は（Rust ワークスペースから独立した）自己完結的なパイプラインで、`massspecgym`/torch/rdkit に依存します。公式の Fingerprint FFN 検索ベースラインを学習し、その予測を masstrust のスキーマでエクスポートし、実際の MassSpecGym データ上で masstrust 自身のスコアリング方法の AURC / E-AURC / リスク目標時のカバレッジを報告します。これは競合ツールとの比較に先立って、実データによる再現可能なベンチマークを確立するためのものであり、現時点では競合比較は行っていません。
+
+このハーネス自体は、実データに対する小規模な preflight 実行（ダウンロード → 学習 → チェックポイント → 予測 → レポート生成）でエンドツーエンドの検証済みで、その過程でいくつかの実際の統合バグを発見・修正しています。本番規模のベンチマーク実行はまだ完了しておらず、結果は未公開です。詳細な手順と現在の状況は `benchmarks/massspecgym/README.md` を参照してください。
 
 ---
 

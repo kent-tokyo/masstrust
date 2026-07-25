@@ -288,7 +288,9 @@ masstrust calibrate labeled.csv --score score-gap --error-rate 0.05 --method crc
 
 ## 在 MassSpecGym 上进行基准测试
 
-`benchmarks/massspecgym/` 是一个独立于 Rust 工作区之外的自包含流水线（依赖 `massspecgym`/torch/rdkit），用于训练官方的 Fingerprint FFN 检索基线模型，将其预测结果导出为 masstrust 的数据格式，并报告 masstrust 自身评分方法在真实 MassSpecGym 数据上的 AURC / E-AURC / 目标风险下的覆盖率。这是在与竞品比较之前，建立一个真实、可复现的基准——目前尚未声称与任何竞品进行了比较。完整流程见 `benchmarks/massspecgym/README.md`。
+`benchmarks/massspecgym/` 是一个独立于 Rust 工作区之外的自包含流水线（依赖 `massspecgym`/torch/rdkit），用于训练官方的 Fingerprint FFN 检索基线模型，将其预测结果导出为 masstrust 的数据格式，并报告 masstrust 自身评分方法在真实 MassSpecGym 数据上的 AURC / E-AURC / 目标风险下的覆盖率。这是在与竞品比较之前，建立一个真实、可复现的基准——目前尚未声称与任何竞品进行了比较。
+
+该流水线本身已通过一次小规模的真实数据 preflight 运行（下载 → 训练 → 保存检查点 → 导出预测 → 生成报告）完成端到端验证，过程中发现并修复了若干真实的集成问题。完整规模的基准测试尚未完成，目前没有可公开的结果。完整流程和当前状态见 `benchmarks/massspecgym/README.md`。
 
 ---
 

@@ -13,6 +13,27 @@ This pipeline is intentionally kept out of the Rust workspace: it depends on
 `massspecgym`, which pulls in torch/rdkit/torch_geometric/pytorch-lightning.
 None of that touches any Rust crate.
 
+## Status
+
+- **Harness**: hardened and passing `smoke_test.py` against the fixture (see
+  `CHANGELOG.md`).
+- **Preflight** (real data, limited batches — see below): passed end to end.
+  Found and fixed 5 real bugs along the way — see
+  [Known issues found during the real-data preflight](#known-issues-found-during-the-real-data-preflight).
+- **Official seed-0 run**: attempted, not yet completed. The first attempt hit
+  a real `DataLoader`-worker crash (fixed — see below). After that fix, the
+  run itself progressed but at a rate that would take on the order of a
+  month for 50 epochs on the machine tested so far (Apple Silicon, MPS
+  backend) — almost certainly RDKit candidate-fingerprint computation, not
+  the accelerator, per-query up to 256 candidates × batch-size-many queries
+  per batch, all CPU-bound regardless of GPU. Stopped before any checkpoint
+  was written; no benchmark numbers exist yet. See `tasks/todo.md` for the
+  current state and what needs investigating (throughput profiling, `num_workers`
+  tuning, precomputed/cached candidate fingerprints, or real CUDA hardware)
+  before relaunching.
+- **No benchmark numbers have been published or recorded anywhere** — only
+  preflight runs (explicitly non-representative, small-batch) have completed.
+
 ## Protocol
 
 1. **Data**: the official MassSpecGym retrieval dataset and the official
@@ -131,8 +152,9 @@ python smoke_test.py
 python prepare_data.py --out-dir ./data
 
 # 2. Train the baseline and export val/test prediction dumps
-#    (real GPU training run — see the warning above):
-python run_baseline.py --out-dir ./data --seed 0
+#    (real training run, --num-workers > 0 recommended — see the
+#    performance note below):
+python run_baseline.py --out-dir ./data --seed 0 --num-workers 4
 
 # 3. Validate the exported predictions (schema, leakage, quality gate):
 python validate_predictions.py --val ./data/val_predictions.csv --test ./data/test_predictions.csv
@@ -144,8 +166,18 @@ python generate_report.py --val ./data/val_predictions.csv --test ./data/test_pr
 
 Step 0 is the only part of this that's fast and dependency-light; it's what
 should run in CI-like contexts. Steps 1–2 need real compute and network
-access and are not run automatically — see `tasks/todo.md` at the repo root
-for status.
+access — see `## Status` above and `tasks/todo.md` at the repo root for where
+this currently stands.
+
+**Performance note:** upstream's reference setup assumes a real CUDA GPU.
+On hardware without CUDA (tested: Apple Silicon via the MPS backend),
+`accelerator="gpu"` still resolves and runs, but training throughput can be
+dramatically worse than expected — likely because `RetrievalDataset.__getitem__`
+computes an RDKit fingerprint per candidate per query (up to 256
+candidates/query) on CPU, regardless of which accelerator the model itself
+runs on. Before committing to a full 50-epoch run on non-CUDA hardware,
+time a handful of batches first (see Preflight below) and extrapolate; if
+it's not GPU-cluster-scale hardware, expect this to matter.
 
 ### Preflight: real data, limited batches
 
@@ -155,7 +187,8 @@ confirm the download, training loop, best-checkpoint reload, CSV export, and
 report generation all actually work end to end — without producing a number
 anyone could mistake for a result. `generate_report.py` reads `run_kind` from
 the manifest and prints a loud non-benchmark banner at the top of `report.md`
-when it's `preflight`.
+when it's `preflight`. **This has been run successfully** — see `## Status`
+above and the fixes it surfaced, listed below.
 
 ```bash
 python prepare_data.py --out-dir ./data/preflight
@@ -166,7 +199,7 @@ python run_baseline.py \
     --max-epochs 1 \
     --accelerator cpu \
     --devices 1 \
-    --num-workers 0 \
+    --num-workers 2 \
     --limit-train-batches 2 \
     --limit-val-batches 2 \
     --limit-test-batches 2 \
@@ -195,6 +228,45 @@ every query has a true candidate; no non-finite scores or duplicate ranks;
 evaluation JSON all get written. The accuracy numbers themselves are
 meaningless (a handful of batches) and must not be published or recorded
 anywhere as a result.
+
+## Known issues found during the real-data preflight
+
+None of this was catchable from the fixture — `smoke_test.py` never installs
+massspecgym or touches real data, by design (fast, dependency-light, CI-safe).
+These only surfaced by actually running the pipeline end to end. Listed here
+so they're discoverable rather than buried in commit history; all are fixed
+in the current code.
+
+- **`massspecgym.utils.load_massspecgym()` takes no path argument** and
+  always downloads its own unpinned copy of the *older* `MassSpecGym.tsv`
+  internally — not the pinned `MassSpecGym1.5.tsv` this harness downloads and
+  hashes. `prepare_data.py`/`run_baseline.py` read the pinned file directly
+  with pandas instead.
+- **`requirements.txt` had an unresolvable pin conflict**: a top-level
+  `huggingface_hub==0.26.2` pin conflicted with `massspecgym==1.3.1`'s own
+  hard pin of `huggingface-hub==0.23.2`. Removed the redundant top-level pin.
+- **`pytorch-lightning==2.2.5`'s `lightning_fabric` needs `pkg_resources`**,
+  which `setuptools>=81` removed. `requirements.txt` now pins `setuptools<81`.
+- **Confirmed upstream bug in `massspecgym==1.3.1`** (also present on the
+  unreleased `main` branch, checked against both): `RetrievalDataset.__getitem__`
+  deletes `item["candidates"]` after using it, but `FingerprintFFNRetrieval.step()`
+  (used for every train/val/test step) unconditionally reads
+  `batch["candidates"]` — guaranteed `KeyError` on the very first step, using
+  massspecgym's own reference wiring exactly as documented. Worked around in
+  `run_baseline.py` with a small, documented subclass
+  (`_RetrievalDatasetWithCandidates`) that restores the alias to the
+  already-computed fingerprint tensor.
+- **`is_correct` CSV casing**: pandas writes Python bools as `True`/`False`;
+  masstrust-core's Rust CSV reader only accepts lowercase `true`/`false`.
+  Normalized before writing.
+- **`DataLoader(num_workers>0)` crashed immediately**: worker subprocesses
+  need to serialize the dataset, and `_RetrievalDatasetWithCandidates` was
+  originally a class defined inside `main()` — Python can't serialize a
+  function-local class. `--num-workers 0`, used throughout the preflight
+  above, never spawns workers and so never exercised this path; it only
+  surfaced once a real run used `--num-workers > 0` for reasonable
+  throughput. Fixed by moving the class (and the massspecgym imports it
+  depends on) to module level.
 
 ## Explicitly out of scope for this round
 
