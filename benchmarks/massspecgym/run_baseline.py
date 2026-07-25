@@ -77,6 +77,15 @@ def gather_env_info() -> dict:
         if torch.cuda.is_available():
             info["cudnn_version"] = torch.backends.cudnn.version()
             info["gpu_name"] = torch.cuda.get_device_name(0)
+        # Apple Silicon GPU backend — PyTorch Lightning's accelerator="gpu"
+        # resolves to this when no CUDA device is present (confirmed: the
+        # preflight run on this machine logged "GPU available: True (mps)").
+        # Without this, a real run on Apple hardware would silently look
+        # identical in the manifest to one on CPU-only accelerator="gpu"
+        # unavailable, or a CUDA GPU we don't actually have.
+        info["mps_available"] = bool(
+            getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
+        )
     except Exception as e:
         print(f"WARNING: could not read torch/CUDA info: {e}", file=sys.stderr)
     try:
