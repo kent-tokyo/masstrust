@@ -40,7 +40,6 @@ def main() -> None:
     try:
         from huggingface_hub import hf_hub_download
         import massspecgym
-        from massspecgym.utils import load_massspecgym
     except ImportError as e:
         sys.exit(
             f"Missing dependency ({e}). Install with:\n"
@@ -64,9 +63,13 @@ def main() -> None:
         local_dir=args.out_dir,
     )
 
-    # Reuse massspecgym's own loader (not a hand-rolled TSV parser) so the
-    # mzs/intensities parsing exactly matches what run_baseline.py will use.
-    df = load_massspecgym(pth=Path(dataset_pth))
+    # Not massspecgym.utils.load_massspecgym(): it takes no path argument and
+    # always downloads its own unpinned copy of the *older* "MassSpecGym.tsv"
+    # internally (confirmed against the installed package — see config.py).
+    # Read our own pinned file directly; only the fold column is needed here.
+    import pandas as pd
+
+    df = pd.read_csv(dataset_pth, sep="\t")
     if config.SPLIT_COLUMN not in df.columns:
         sys.exit(f"Expected split column '{config.SPLIT_COLUMN}' not found in dataset.")
     fold_counts = df[config.SPLIT_COLUMN].value_counts().to_dict()

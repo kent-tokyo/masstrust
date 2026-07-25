@@ -16,10 +16,13 @@ HF_REPO_TYPE = "dataset"
 # when you do.
 DATASET_REVISION = "c9aa3feb5f6ec0adee56cc78d2dce24826356156"
 
-# "v1.5" is a data-revision name baked into massspecgym.utils.load_massspecgym()'s
-# default filename, independent of the massspecgym pip package's own version
-# (pinned separately below). Confirmed in massspecgym/utils.py: the function
-# downloads "MassSpecGym1.5.tsv" by default.
+# "v1.5" is a data-revision name, independent of the massspecgym pip package's
+# own version (pinned separately below). Fetched directly via hf_hub_download at
+# the pinned DATASET_REVISION below — not via massspecgym.utils.load_massspecgym(),
+# which takes no path argument and always downloads its own unpinned copy of the
+# *older* "MassSpecGym.tsv" internally (confirmed against the installed package
+# during the real-data preflight run; a previous version of this comment claimed
+# otherwise without having actually run it).
 DATASET_FILE = "MassSpecGym1.5.tsv"
 DATASET_VERSION = "MassSpecGym1.5"
 

@@ -10,6 +10,17 @@ scripts/run.py --task=retrieval --model=fingerprint_ffn exactly, since no
 pretrained checkpoint is published upstream (checked: GitHub releases carry
 no binary assets) — training from scratch is the documented, intended path.
 
+One exception: `_RetrievalDatasetWithCandidates` below works around a
+confirmed bug in massspecgym==1.3.1 (also present on the unreleased `main`
+branch as of 2026-07) where `RetrievalDataset.__getitem__` deletes
+`item["candidates"]` after using it, but `FingerprintFFNRetrieval.step()`
+(shared by every train/val/test step) unconditionally reads
+`batch["candidates"]` — a guaranteed `KeyError` on the very first step, using
+massspecgym's own reference wiring exactly as documented, confirmed against
+both the installed package and the upstream GitHub source at tag v1.3.1. The
+one-line fix restores the alias to the already-computed fingerprint tensor;
+nothing is recomputed or reinterpreted.
+
 Correctness (`is_correct`) is computed with massspecgym's own
 MolToInChIKey transform, matching RetrievalDataset.__getitem__'s own
 labeling convention exactly rather than inventing a new identity rule.
@@ -43,11 +54,14 @@ def sha256_of(path: Path) -> str:
 
 
 def parse_best_epoch(checkpoint_pth: str):
-    # Parsed from our own ModelCheckpoint filename template
-    # (filename="fingerprint_ffn-{epoch:02d}") rather than reloading the
-    # checkpoint file — avoids any torch.load/weights_only friction for a
-    # value we already control the format of.
-    m = re.search(r"fingerprint_ffn-(\d+)", Path(checkpoint_pth).stem)
+    # Parsed from the checkpoint filename rather than reloading the file itself
+    # — avoids any torch.load/weights_only friction for a value we can get from
+    # the name alone. Our own ModelCheckpoint filename template is
+    # "fingerprint_ffn-{epoch:02d}", but PyTorch Lightning's default
+    # auto_insert_metric_name=True renders that placeholder as "epoch=00", not
+    # a bare "00" (confirmed against a real checkpoint file: previously this
+    # regex silently never matched, and best_epoch was always null).
+    m = re.search(r"epoch=(\d+)", Path(checkpoint_pth).stem)
     return int(m.group(1)) if m else None
 
 
@@ -153,6 +167,11 @@ def export_split(
             )
 
     out_df = pd.DataFrame(rows)
+    # pandas writes Python bools as "True"/"False"; masstrust-core's Rust CSV
+    # reader only accepts lowercase "true"/"false" (confirmed: a real preflight
+    # run against this CSV failed `masstrust validate-split` with "provided
+    # string was not `true` or `false`" before this normalization was added).
+    out_df["is_correct"] = out_df["is_correct"].map({True: "true", False: "false"})
     out_df.to_csv(out_csv, index=False)
     print(f"Wrote {len(out_df)} rows ({df.shape[0]} queries) to {out_csv}")
     return out_df
@@ -197,13 +216,20 @@ def main() -> None:
         from massspecgym.data.datasets import RetrievalDataset
         from massspecgym.data.transforms import MolFingerprinter, MolToInChIKey, SpecBinner
         from massspecgym.models.retrieval import fingerprint_ffn as fingerprint_ffn_module
-        from massspecgym.utils import load_massspecgym
     except ImportError as e:
         sys.exit(f"Missing dependency ({e}). Install with:\n  pip install -r requirements.txt")
 
     # Aliased (not called as `...Retrieval(`) only to dodge an overly broad
     # substring-based `eval(` lint in this environment; there is no eval() here.
     fingerprint_ffn_cls = fingerprint_ffn_module.FingerprintFFNRetrieval
+
+    class _RetrievalDatasetWithCandidates(RetrievalDataset):
+        # Workaround for massspecgym==1.3.1's RetrievalDataset/FingerprintFFNRetrieval
+        # mismatch — see the module docstring above for the full explanation.
+        def __getitem__(self, i):
+            item = super().__getitem__(i)
+            item["candidates"] = item["candidates_mol"]
+            return item
 
     pl.seed_everything(args.seed)
 
@@ -221,11 +247,21 @@ def main() -> None:
     )
 
     # True SMILES per query, for is_correct computation after prediction export.
-    df_meta = load_massspecgym(pth=Path(dataset_pth))
-    true_smiles_by_id = df_meta["smiles"].to_dict()
+    # Not massspecgym.utils.load_massspecgym(): it takes no path argument and
+    # always downloads its own unpinned copy of the dataset internally
+    # (confirmed against the installed package — an earlier version of this
+    # comment claimed otherwise without having actually run it). Read our own
+    # pinned, already-hashed TSV directly instead, matching load_massspecgym's
+    # own indexing convention (set_index("identifier")) minus the mzs/intensities
+    # parsing we don't need for this.
+    import pandas as pd
+
+    true_smiles_by_id = (
+        pd.read_csv(dataset_pth, sep="\t").set_index("identifier")["smiles"].to_dict()
+    )
     mol_to_inchikey = MolToInChIKey()
 
-    dataset = RetrievalDataset(
+    dataset = _RetrievalDatasetWithCandidates(
         pth=dataset_pth,
         spec_transform=SpecBinner(max_mz=args.max_mz, bin_width=args.bin_width),
         mol_transform=MolFingerprinter(fp_size=args.fp_size),
