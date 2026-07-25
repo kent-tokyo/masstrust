@@ -1,0 +1,13 @@
+query_id,candidate_id,rank,score,is_correct,split,model_name,checkpoint_sha256,dataset_version,candidate_pool,seed
+t1,c1,1,0.92,true,test,fixture_model,deadbeef,MassSpecGymFixture,fixture_pool,0
+t1,c2,2,0.50,false,test,fixture_model,deadbeef,MassSpecGymFixture,fixture_pool,0
+t2,c1,1,0.70,false,test,fixture_model,deadbeef,MassSpecGymFixture,fixture_pool,0
+t2,c2,2,0.65,true,test,fixture_model,deadbeef,MassSpecGymFixture,fixture_pool,0
+t3,c1,1,0.99,true,test,fixture_model,deadbeef,MassSpecGymFixture,fixture_pool,0
+t3,c2,2,0.30,false,test,fixture_model,deadbeef,MassSpecGymFixture,fixture_pool,0
+t3,c3,3,0.05,false,test,fixture_model,deadbeef,MassSpecGymFixture,fixture_pool,0
+t4,c1,1,0.60,true,test,fixture_model,deadbeef,MassSpecGymFixture,fixture_pool,0
+t5,c1,1,0.55,false,test,fixture_model,deadbeef,MassSpecGymFixture,fixture_pool,0
+t5,c2,2,0.10,true,test,fixture_model,deadbeef,MassSpecGymFixture,fixture_pool,0
+t6,c1,1,0.88,true,test,fixture_model,deadbeef,MassSpecGymFixture,fixture_pool,0
+t6,c2,2,0.87,false,test,fixture_model,deadbeef,MassSpecGymFixture,fixture_pool,0

@@ -18,8 +18,13 @@ fn parse_score(s: &str) -> PyResult<ScoringMethod> {
         "score-gap" | "score_gap" => Ok(ScoringMethod::ScoreGap),
         "margin" => Ok(ScoringMethod::Margin),
         "entropy" => Ok(ScoringMethod::Entropy),
+        "score-ratio" | "score_ratio" => Ok(ScoringMethod::ScoreRatio),
+        "topk-gap" | "topk_gap" => Ok(ScoringMethod::TopKGap),
+        "effective-k" | "effective_k" => Ok(ScoringMethod::EffectiveK),
+        "candidate-count" | "candidate_count" => Ok(ScoringMethod::CandidateCount),
         o => Err(PyValueError::new_err(format!(
-            "Unknown score method '{o}'. Valid: max-prob, score-gap, margin, entropy"
+            "Unknown score method '{o}'. Valid: max-prob, score-gap, margin, entropy, \
+             score-ratio, topk-gap, effective-k, candidate-count"
         ))),
     }
 }
@@ -80,6 +85,8 @@ fn dict_to_policy(d: &Bound<'_, PyDict>) -> PyResult<PolicyFile> {
         calibration_method,
         confidence_level,
         created_by: "masstrust".into(),
+        group_col: None,
+        group_thresholds: None,
     })
 }
 
@@ -197,6 +204,8 @@ fn calibrate(
         calibration_method: cal_method,
         confidence_level,
         created_by: "masstrust".into(),
+        group_col: None,
+        group_thresholds: None,
     };
 
     Ok(policy_to_dict(py, &pf)?.unbind())

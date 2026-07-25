@@ -1,6 +1,22 @@
 use crate::scoring::compute_confidence;
 use crate::types::{QueryRanking, RiskCoverageRow, ScoringMethod};
 
+/// Extract `(confidence, is_correct)` observations for scoreable labeled queries.
+///
+/// Queries without a label or without a computable confidence are excluded.
+/// Used as input to [`crate::metrics::bootstrap_aurc_ci`].
+pub fn obs_from_rankings(rankings: &[QueryRanking], method: ScoringMethod) -> Vec<(f64, bool)> {
+    rankings
+        .iter()
+        .filter_map(|r| {
+            let top1 = r.candidates.iter().min_by_key(|c| c.rank)?;
+            let is_correct = top1.is_correct?;
+            let conf = compute_confidence(r, method)?;
+            Some((conf, is_correct))
+        })
+        .collect()
+}
+
 /// Compute the risk-coverage curve for a set of labeled query rankings.
 ///
 /// Queries without an `is_correct` label are excluded from the curve.
@@ -71,6 +87,59 @@ pub fn compute_curve(rankings: &[QueryRanking], method: ScoringMethod) -> Vec<Ri
     }
 
     rows
+}
+
+/// Apply a single, externally-supplied confidence threshold to labeled query rankings and
+/// report the coverage/risk actually achieved.
+///
+/// Unlike [`compute_curve`], this does not search over thresholds — it evaluates exactly one
+/// (typically calibrated on a separate validation set), so calibration and evaluation never
+/// share the same queries. Acceptance uses the same rule as
+/// [`crate::policy::apply_policy`]: `confidence.is_finite() && confidence >= threshold`.
+///
+/// Queries without an `is_correct` label are excluded, matching [`compute_curve`].
+pub fn evaluate_at_threshold(
+    rankings: &[QueryRanking],
+    method: ScoringMethod,
+    threshold: f64,
+) -> RiskCoverageRow {
+    let entries: Vec<(Option<f64>, bool)> = rankings
+        .iter()
+        .filter_map(|r| {
+            let top1 = r.candidates.iter().min_by_key(|c| c.rank)?;
+            let is_correct = top1.is_correct?;
+            Some((compute_confidence(r, method), is_correct))
+        })
+        .collect();
+
+    let total = entries.len();
+    let mut accepted = 0usize;
+    let mut errors = 0usize;
+    for &(confidence, is_correct) in &entries {
+        if confidence.is_some_and(|c| c.is_finite() && c >= threshold) {
+            accepted += 1;
+            if !is_correct {
+                errors += 1;
+            }
+        }
+    }
+
+    RiskCoverageRow {
+        threshold,
+        accepted,
+        total,
+        coverage: if total > 0 {
+            accepted as f64 / total as f64
+        } else {
+            0.0
+        },
+        errors,
+        risk: if accepted > 0 {
+            Some(errors as f64 / accepted as f64)
+        } else {
+            None
+        },
+    }
 }
 
 #[cfg(test)]
@@ -175,5 +244,65 @@ mod tests {
         ];
         let rows = compute_curve(&rankings, ScoringMethod::ScoreGap);
         assert_eq!(rows.last().unwrap().risk, Some(1.0));
+    }
+
+    #[test]
+    fn test_evaluate_at_threshold_basic() {
+        // gaps: q1=0.20 (correct), q2=0.10 (incorrect), q3=0.05 (correct)
+        let rankings = vec![
+            make_ranking("q1", 0.90, 0.70, None, Some(true)),
+            make_ranking("q2", 0.80, 0.70, None, Some(false)),
+            make_ranking("q3", 0.75, 0.70, None, Some(true)),
+        ];
+        // Threshold of 0.10 accepts q1 and q2 only (gap >= 0.10).
+        let row = evaluate_at_threshold(&rankings, ScoringMethod::ScoreGap, 0.10);
+        assert_eq!(row.threshold, 0.10);
+        assert_eq!(row.total, 3);
+        assert_eq!(row.accepted, 2);
+        assert_eq!(row.errors, 1);
+        assert_eq!(row.risk, Some(0.5));
+    }
+
+    #[test]
+    fn test_evaluate_at_threshold_no_acceptances() {
+        let rankings = vec![make_ranking("q1", 0.9, 0.7, None, Some(true))];
+        let row = evaluate_at_threshold(&rankings, ScoringMethod::ScoreGap, 10.0);
+        assert_eq!(row.accepted, 0);
+        assert_eq!(row.risk, None);
+        assert_eq!(row.coverage, 0.0);
+    }
+
+    #[test]
+    fn test_evaluate_at_threshold_unscoreable_query_never_accepted() {
+        // Single-candidate query: score_gap is unscoreable (None), must never be accepted
+        // even at a very permissive (very low) threshold.
+        let unscoreable = QueryRanking {
+            query_id: "q1".into(),
+            candidates: vec![Candidate {
+                query_id: "q1".into(),
+                candidate_id: "c1".into(),
+                rank: 1,
+                score: 0.9,
+                probability: None,
+                smiles: None,
+                inchikey: None,
+                formula: None,
+                is_correct: Some(true),
+                group: None,
+            }],
+        };
+        let scoreable = make_ranking("q2", 0.9, 0.1, None, Some(true));
+        let row =
+            evaluate_at_threshold(&[unscoreable, scoreable], ScoringMethod::ScoreGap, f64::MIN);
+        assert_eq!(row.total, 2);
+        assert_eq!(row.accepted, 1);
+    }
+
+    #[test]
+    fn test_evaluate_at_threshold_excludes_unlabeled_queries() {
+        let r = make_ranking("q1", 0.9, 0.8, None, None);
+        let row = evaluate_at_threshold(&[r], ScoringMethod::ScoreGap, 0.0);
+        assert_eq!(row.total, 0);
+        assert_eq!(row.accepted, 0);
     }
 }

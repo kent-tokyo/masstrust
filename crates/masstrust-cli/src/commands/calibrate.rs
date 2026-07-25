@@ -2,12 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use clap::Args;
-use masstrust_core::{
-    calibration::{calibrate_binomial, calibrate_crc, calibrate_empirical, calibrate_grouped},
-    io, metrics, CalibrationMethod, PolicyFile,
-};
+use masstrust_core::{calibration::calibrate_grouped, io, metrics, PolicyFile};
 
-use super::parse_scoring_method;
+use super::{calibrate_curve, parse_calibration_method, parse_scoring_method};
 
 #[derive(Args)]
 pub struct CalibrateArgs {
@@ -38,15 +35,7 @@ pub struct CalibrateArgs {
 
 pub fn run(args: CalibrateArgs) -> anyhow::Result<()> {
     let scoring_method = parse_scoring_method(&args.score)?;
-    let calibration_method = match args.method.as_str() {
-        "empirical" => CalibrationMethod::Empirical,
-        "binomial" => CalibrationMethod::Binomial,
-        "crc" => CalibrationMethod::Crc,
-        other => anyhow::bail!(
-            "Unknown calibration method: '{}'. Valid: empirical, binomial, crc",
-            other
-        ),
-    };
+    let calibration_method = parse_calibration_method(&args.method)?;
 
     let mut candidates = io::read_candidates(&args.input)?;
 
@@ -62,16 +51,12 @@ pub fn run(args: CalibrateArgs) -> anyhow::Result<()> {
 
     // Global curve + threshold (always computed as fallback).
     let curve = metrics::compute_curve(&rankings, scoring_method);
-    let global_threshold_opt = match calibration_method {
-        CalibrationMethod::Empirical => calibrate_empirical(&curve, args.error_rate),
-        CalibrationMethod::Crc => calibrate_crc(&curve, args.error_rate),
-        CalibrationMethod::Binomial => {
-            let level = args.confidence_level.ok_or_else(|| {
-                anyhow::anyhow!("--confidence-level required for binomial method")
-            })?;
-            calibrate_binomial(&curve, args.error_rate, level)?
-        }
-    };
+    let global_threshold_opt = calibrate_curve(
+        &curve,
+        calibration_method,
+        args.error_rate,
+        args.confidence_level,
+    )?;
 
     let global_threshold = match global_threshold_opt {
         Some(t) => t,

@@ -1,7 +1,11 @@
+mod candidate_count;
+mod effective_k;
 mod entropy;
 mod margin;
 mod max_prob;
 mod score_gap;
+mod score_ratio;
+mod topk_gap;
 
 use crate::types::{QueryRanking, ScoringMethod};
 
@@ -37,5 +41,9 @@ pub fn compute_confidence(ranking: &QueryRanking, method: ScoringMethod) -> Opti
         ScoringMethod::ScoreGap => score_gap::score(ranking),
         ScoringMethod::Margin => margin::score(ranking),
         ScoringMethod::Entropy => entropy::score(ranking),
+        ScoringMethod::ScoreRatio => score_ratio::score(ranking),
+        ScoringMethod::TopKGap => topk_gap::score(ranking),
+        ScoringMethod::EffectiveK => effective_k::score(ranking),
+        ScoringMethod::CandidateCount => candidate_count::score(ranking),
     }
 }

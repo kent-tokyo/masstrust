@@ -26,6 +26,9 @@ pub struct CurveArgs {
     /// Output SVG confidence histogram (requires --features plot)
     #[arg(long)]
     pub histogram: Option<PathBuf>,
+    /// Bootstrap resamples for AURC 95% CI (0 = off)
+    #[arg(long, default_value_t = 0)]
+    pub bootstrap: usize,
 }
 
 pub fn run(args: CurveArgs) -> anyhow::Result<()> {
@@ -44,6 +47,16 @@ pub fn run(args: CurveArgs) -> anyhow::Result<()> {
     }
     if eaurc.is_finite() {
         eprintln!("  E-AURC: {eaurc:.6}");
+    }
+    if args.bootstrap > 0 {
+        let obs = metrics::obs_from_rankings(&rankings, method);
+        let (lo, hi) = metrics::bootstrap_aurc_ci(&obs, args.bootstrap, 42);
+        if lo.is_finite() && hi.is_finite() {
+            eprintln!(
+                "  AURC 95% CI [{lo:.6}, {hi:.6}]  (n={n})",
+                n = args.bootstrap
+            );
+        }
     }
 
     if args.verbose {

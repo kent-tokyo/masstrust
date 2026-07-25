@@ -39,11 +39,22 @@
 
 ## Next
 
+### v0.3.0 — Evaluation Quality & Practical Tooling
+- [x] Bootstrap confidence intervals for AURC (`--bootstrap N` on `curve`; `aurc_from_obs`, `bootstrap_aurc_ci`)
+- [x] Additional confidence scoring: `score-ratio`, `topk-gap`, `effective-k`, `candidate-count`
+- [x] `masstrust compare` — compare multiple scoring methods in one run
+- [x] `masstrust drift` — KS-based distribution shift detection (calibration vs new data)
+- [x] `masstrust validate-split` — leakage guard (query_id/inchikey/formula overlap, exit 1)
+
+### v0.4.0 — Benchmark harness (in progress)
+- [x] `masstrust evaluate` — evaluate a fixed policy threshold on separate, labeled held-out data (val-calibrate / test-evaluate, no recalibration on eval data)
+- [x] Fix `compute_eaurc` to return NaN (not a biased κ) when unscoreable queries prevent full coverage
+- [ ] `benchmarks/massspecgym/` — reproducible Python pipeline: official MassSpecGym baseline retrieval predictions, validator, benchmark report (see plan doc)
+
 ### Future / Research
 - [ ] Validate CRC calibration on public MS/MS benchmarks (MassSpecGym)
 - [ ] Grouped calibration: additional examples and docs
-- [ ] Bootstrap confidence intervals for AURC
-- [ ] Calibration drift detection
+- [ ] Calibration drift detection: group distribution shift (adduct, ion_mode)
 - [ ] E-AURC when unscoreable queries present (currently returns NaN)
 - [ ] Conformal risk control with non-binary loss (monotone loss formulation)
 - [ ] Grouped calibration by compound class (requires chemical taxonomy lookup)

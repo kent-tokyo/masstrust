@@ -5,3 +5,9 @@
 .DS_Store
 .claude/
 .vscode/
+
+# benchmarks/massspecgym generated artifacts (real dataset dumps, checkpoints, reports)
+__pycache__/
+*.pyc
+benchmarks/massspecgym/data/
+benchmarks/massspecgym/report/

@@ -72,6 +72,17 @@ pub enum ScoringMethod {
     /// `1 − H_normalized` where `H` is the Shannon entropy over candidate probabilities.
     /// Higher values mean higher confidence.
     Entropy,
+    /// Ratio of the top-1 score to the top-2 score (`score(1) / score(2)`).
+    /// Returns `None` when fewer than 2 candidates exist or when `score(2) ≤ 0`.
+    ScoreRatio,
+    /// Top-1 score minus the mean of scores for ranks 2..=min(k, 5).
+    /// More robust than `ScoreGap` when several near-tie candidates are present.
+    TopKGap,
+    /// `exp(−H)` where `H` is the Shannon entropy in nats over candidate probabilities.
+    /// Equals `1/effective_k`; ranges in `(0, 1]`.  Requires the `probability` column.
+    EffectiveK,
+    /// `1 / n_candidates`.  Lower candidate count → higher confidence.  Always `Some`.
+    CandidateCount,
 }
 
 /// Threshold calibration method.

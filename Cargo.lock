@@ -872,6 +872,7 @@ dependencies = [
  "clap",
  "masstrust-core",
  "plotters",
+ "serde",
  "serde_json",
  "tempfile",
 ]

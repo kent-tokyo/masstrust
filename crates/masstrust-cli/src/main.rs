@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 
 mod commands;
 mod plot;
-use commands::{apply, batch, calibrate, curve};
+use commands::{apply, batch, calibrate, compare, curve, drift, evaluate, validate_split};
 
 #[derive(Parser)]
 #[command(
@@ -25,6 +25,14 @@ enum Commands {
     Apply(apply::ApplyArgs),
     /// Apply a policy to multiple input files (batch mode)
     Batch(batch::BatchArgs),
+    /// Compare multiple scoring methods on one labeled dataset
+    Compare(compare::CompareArgs),
+    /// Detect confidence distribution shift between calibration and new data
+    Drift(drift::DriftArgs),
+    /// Evaluate a fixed policy threshold on separate, labeled held-out data
+    Evaluate(evaluate::EvaluateArgs),
+    /// Check for data leakage between calibration and test sets
+    ValidateSplit(validate_split::ValidateSplitArgs),
 }
 
 fn main() {
@@ -34,6 +42,10 @@ fn main() {
         Commands::Calibrate(args) => calibrate::run(args),
         Commands::Apply(args) => apply::run(args),
         Commands::Batch(args) => batch::run(args),
+        Commands::Compare(args) => compare::run(args),
+        Commands::Drift(args) => drift::run(args),
+        Commands::Evaluate(args) => evaluate::run(args),
+        Commands::ValidateSplit(args) => validate_split::run(args),
     };
     if let Err(e) = result {
         eprintln!("error: {e}");
