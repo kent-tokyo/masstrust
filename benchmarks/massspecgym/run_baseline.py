@@ -53,7 +53,7 @@ def parse_best_epoch(checkpoint_pth: str):
 
 def gather_env_info() -> dict:
     # Best-effort: never let a missing piece of the environment (no GPU, no
-    # RDKit, no git) blank out the rest — each source is independent.
+    # RDKit) blank out the rest — each source is independent.
     info = {}
     try:
         import torch
@@ -71,21 +71,39 @@ def gather_env_info() -> dict:
         info["rdkit_version"] = rdBase.rdkitVersion
     except Exception as e:
         print(f"WARNING: could not read RDKit version: {e}", file=sys.stderr)
-    try:
-        repo_root = Path(__file__).resolve().parents[2]
-        info["masstrust_commit"] = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+    return info
+
+
+def git_provenance():
+    # (commit_sha, working_tree_dirty) — which exact masstrust code produced this
+    # run, and whether it was run from a clean checkout. Returns (None, None) if
+    # git isn't available (e.g. running from a downloaded archive without .git).
+    repo_root = Path(__file__).resolve().parents[2]
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    dirty = bool(
+        subprocess.run(
+            ["git", "status", "--porcelain"],
             cwd=repo_root,
             capture_output=True,
             text=True,
             check=True,
         ).stdout.strip()
-    except Exception as e:
-        print(f"WARNING: could not read masstrust git commit: {e}", file=sys.stderr)
-    return info
+    )
+    return commit, dirty
 
 
-def export_split(pkl_path, out_csv, split, seed, checkpoint_hash, true_smiles_by_id, mol_to_inchikey):
+def batch_limit(s: str):
+    # PyTorch Lightning's limit_*_batches takes an absolute batch count as int,
+    # or a fraction of the dataset as float in [0, 1] — "2" and "0.1" must parse
+    # to different Python types for Lightning to interpret them correctly.
+    return int(s) if "." not in s else float(s)
+
+
+def export_split(
+    pkl_path, out_csv, split, seed, checkpoint_hash, run_kind, true_smiles_by_id, mol_to_inchikey
+):
     import pandas as pd
 
     df = pd.read_pickle(pkl_path)
@@ -114,6 +132,10 @@ def export_split(pkl_path, out_csv, split, seed, checkpoint_hash, true_smiles_by
                     "dataset_version": config.DATASET_VERSION,
                     "candidate_pool": config.CANDIDATE_POOL,
                     "seed": seed,
+                    # "preflight" (limited batches/epochs, pipeline smoke-check only) or
+                    # "benchmark" (full run) — see generate_report.py, which refuses to
+                    # present preflight numbers as a benchmark result.
+                    "run_kind": run_kind,
                     # Ground-truth molecule for this query — lets `masstrust validate-split`
                     # detect answer-molecule leakage between val/test, distinct from
                     # candidate-pool overlap (see crates/masstrust-cli validate_split.rs).
@@ -154,6 +176,17 @@ def main() -> None:
     parser.add_argument("--hidden-channels", type=int, default=512)
     parser.add_argument("--num-layers", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument(
+        "--limit-train-batches", type=batch_limit, default=1.0,
+        help="Absolute batch count (e.g. 2) or fraction (e.g. 0.1); PL default 1.0 = all batches.",
+    )
+    parser.add_argument("--limit-val-batches", type=batch_limit, default=1.0)
+    parser.add_argument("--limit-test-batches", type=batch_limit, default=1.0)
+    parser.add_argument(
+        "--run-kind", choices=["preflight", "benchmark"], default="benchmark",
+        help="preflight: pipeline smoke-check on real data, limited batches, not a "
+             "benchmark number. benchmark: the real run (default).",
+    )
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -244,6 +277,9 @@ def main() -> None:
         max_epochs=args.max_epochs,
         logger=False,
         callbacks=[checkpoint_cb],
+        limit_train_batches=args.limit_train_batches,
+        limit_val_batches=args.limit_val_batches,
+        limit_test_batches=args.limit_test_batches,
     )
 
     trainer.fit(model, datamodule=data_module)
@@ -272,12 +308,18 @@ def main() -> None:
             "checkpoint_path": str(checkpoint_pth),
             "checkpoint_sha256": checkpoint_hash,
             "seed": args.seed,
+            "run_kind": args.run_kind,
             "training_args": dict(vars(args), out_dir=str(args.out_dir)),
             "pytorch_lightning_version": pl.__version__,
             "trained_at": datetime.now(timezone.utc).isoformat(),
             "commands": manifest.get("commands", []) + [" ".join(sys.argv)],
         }
     )
+    try:
+        manifest["masstrust_commit"], manifest["working_tree_dirty"] = git_provenance()
+    except Exception as e:
+        print(f"WARNING: could not read masstrust git commit/status: {e}", file=sys.stderr)
+        manifest["masstrust_commit"], manifest["working_tree_dirty"] = None, None
     manifest_pth.write_text(json.dumps(manifest, indent=2, default=str))
 
     # Predictions from the best checkpoint, not the final-epoch in-memory weights.
@@ -295,11 +337,11 @@ def main() -> None:
 
     val_df = export_split(
         val_pkl, args.out_dir / "val_predictions.csv", "val", args.seed, checkpoint_hash,
-        true_smiles_by_id, mol_to_inchikey,
+        args.run_kind, true_smiles_by_id, mol_to_inchikey,
     )
     test_df = export_split(
         test_pkl, args.out_dir / "test_predictions.csv", "test", args.seed, checkpoint_hash,
-        true_smiles_by_id, mol_to_inchikey,
+        args.run_kind, true_smiles_by_id, mol_to_inchikey,
     )
 
     manifest["val_queries"] = int(val_df["query_id"].nunique())

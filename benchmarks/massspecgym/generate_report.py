@@ -238,16 +238,30 @@ def main() -> None:
         else ""
     )
 
+    run_kind = manifest.get("run_kind", "unknown")
+
     report_md = args.out_dir / "report.md"
     lines = [
         "# masstrust MassSpecGym benchmark report",
         "",
+    ]
+    if run_kind == "preflight":
+        lines += [
+            "> ⚠️ **PREFLIGHT RUN — NOT A BENCHMARK RESULT.** Limited batches/epochs on real "
+            "data, run only to verify the pipeline works end to end. These numbers are not "
+            "meaningful and must not be published, cited, or compared against anything.",
+            "",
+        ]
+    lines += [
         "masstrust-only baseline — no competitor reproduction in this report.",
         "",
         f"- model: {manifest.get('model_name', 'unknown')}",
         f"- dataset_version: {manifest.get('dataset_version', 'unknown')}",
         f"- candidate_pool: {manifest.get('candidate_pool', 'unknown')}",
         f"- seed: {manifest.get('seed', 'unknown')}",
+        f"- run_kind: {run_kind}",
+        f"- masstrust_commit: {manifest.get('masstrust_commit', 'unknown')}"
+        f"{' (dirty working tree!)' if manifest.get('working_tree_dirty') else ''}",
         f"- top-1 accuracy (test, all queries): {acc:.4f}",
         "",
         "**Caveat:** the best checkpoint is selected by a *validation* metric, and the "

@@ -70,6 +70,7 @@ columns pass through untouched — no core schema change needed):
 | `dataset_version` | `MassSpecGym1.5` |
 | `candidate_pool` | `MassSpecGym1.5_retrieval_candidates_mass.json` |
 | `seed` | training seed |
+| `run_kind` | `preflight` (limited batches/epochs, pipeline smoke-check only) or `benchmark` (full run) — `generate_report.py` refuses to present `preflight` numbers as a benchmark result |
 | `target_inchikey` | InChIKey of the query's ground-truth molecule (distinct from `candidate_id`, this row's own candidate) — used by `masstrust validate-split` to detect answer-molecule leakage between val and test |
 
 `checkpoint_sha256` is guaranteed to match the weights that actually produced
@@ -108,7 +109,9 @@ regenerate the same run:
 | field | source |
 |---|---|
 | `env_info.torch_version`, `.cuda_version`, `.cudnn_version`, `.gpu_name`, `.rdkit_version` | best-effort, from the training environment |
-| `env_info.masstrust_commit` | `git rev-parse HEAD` in this repo |
+| `masstrust_commit` | `git rev-parse HEAD` in this repo — which exact code produced this run |
+| `working_tree_dirty` | `true` if `git status --porcelain` was non-empty at run time — `masstrust_commit` alone doesn't cover uncommitted changes |
+| `run_kind` | `preflight` or `benchmark` — see the `run_kind` row in `## Output schema` above |
 | `requirements_lock_sha256` | sha256 of `requirements.lock.txt`, a full `pip freeze` written alongside the run |
 | `best_epoch`, `best_val_metric`, `best_val_metric_name` | from the `ModelCheckpoint` callback that selected the checkpoint actually used |
 
@@ -143,6 +146,55 @@ Step 0 is the only part of this that's fast and dependency-light; it's what
 should run in CI-like contexts. Steps 1–2 need real compute and network
 access and are not run automatically — see `tasks/todo.md` at the repo root
 for status.
+
+### Preflight: real data, limited batches
+
+Before spending a full 50-epoch GPU run, run the same steps 1–4 above against
+real data but with `--run-kind preflight` and small `--limit-*-batches`, to
+confirm the download, training loop, best-checkpoint reload, CSV export, and
+report generation all actually work end to end — without producing a number
+anyone could mistake for a result. `generate_report.py` reads `run_kind` from
+the manifest and prints a loud non-benchmark banner at the top of `report.md`
+when it's `preflight`.
+
+```bash
+python prepare_data.py --out-dir ./data/preflight
+
+python run_baseline.py \
+    --out-dir ./data/preflight \
+    --seed 0 \
+    --max-epochs 1 \
+    --accelerator cpu \
+    --devices 1 \
+    --num-workers 0 \
+    --limit-train-batches 2 \
+    --limit-val-batches 2 \
+    --limit-test-batches 2 \
+    --run-kind preflight
+
+python validate_predictions.py \
+    --val ./data/preflight/val_predictions.csv --test ./data/preflight/test_predictions.csv
+
+python generate_report.py \
+    --val ./data/preflight/val_predictions.csv --test ./data/preflight/test_predictions.csv \
+    --manifest ./data/preflight/manifest.json --out-dir ./report/preflight --bootstrap 100
+```
+
+Deliberately not `--fast-dev-run`: Lightning's fast-dev-run mode can disable
+checkpointing, which would skip exactly the best-checkpoint-reload path this
+harness most needs to exercise. `--accelerator cpu` only if GPU isn't
+available for the preflight; switch to `gpu` if a dependency or API
+incompatibility is hard to diagnose on CPU alone.
+
+Preflight passes when: data downloads at the pinned revision; training runs,
+checkpoints, and reloads the best checkpoint; both CSVs are written with
+`checkpoint_sha256`/`dataset_version`/`seed`/`run_kind` populated;
+`validate-split` finds no query_id overlap and reports target-molecule stats;
+every query has a true candidate; no non-finite scores or duplicate ranks;
+`calibrate` → `evaluate` completes; and `report.csv`/`report.md`/policy and
+evaluation JSON all get written. The accuracy numbers themselves are
+meaningless (a handful of batches) and must not be published or recorded
+anywhere as a result.
 
 ## Explicitly out of scope for this round
 
