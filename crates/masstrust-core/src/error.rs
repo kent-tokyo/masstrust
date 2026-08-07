@@ -53,4 +53,12 @@ pub enum MasstrustError {
         "certificate selected query '{query_id}' but no is_correct label for it was found when resolving realized selective risk"
     )]
     MissingRealizedLabel { query_id: String },
+    #[cfg(feature = "risksieve")]
+    #[error(
+        "duplicate query_id '{query_id}' in calibration data — each query must appear exactly once"
+    )]
+    DuplicateCalibrationQueryId { query_id: String },
+    #[cfg(feature = "risksieve")]
+    #[error("duplicate query_id '{query_id}' in test data — each query must appear exactly once")]
+    DuplicateTestQueryId { query_id: String },
 }

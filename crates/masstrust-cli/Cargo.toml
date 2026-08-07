@@ -15,19 +15,25 @@ path = "src/main.rs"
 
 [features]
 plot = ["dep:plotters"]
-risksieve = ["dep:risksieve", "masstrust-core/risksieve"]
+# risksieve's version is exact-pinned (=0.2.0), not a range: certificate.json hardcodes
+# "risksieve 0.2.0" as provenance, so a silent 0.2.x upgrade must not be possible. See
+# risksieve_version_matches_the_exact_pin_in_cargo_lock in tests/certify_batch.rs.
+risksieve = ["dep:risksieve", "dep:sha2", "masstrust-core/risksieve"]
 
 [dependencies]
 masstrust-core = { path = "../masstrust-core", version = "0.1.0" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
-sha2 = "0.10"
 
 [dependencies.risksieve]
-version = "0.2.0"
+version = "=0.2.0"
 optional = true
 features = ["serde"]
+
+[dependencies.sha2]
+version = "0.10"
+optional = true
 
 [dependencies.plotters]
 version = "0.3"

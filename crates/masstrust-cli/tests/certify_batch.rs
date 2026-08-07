@@ -121,6 +121,32 @@ fn smoke_test_generates_all_four_outputs() {
     assert_eq!(cert["guarantee_kind"], "SelectiveDeploymentRisk");
     assert_eq!(cert["schema_version"], "1.0");
     assert!(cert["certificate"]["parameter"].is_array());
+
+    // Audit-provenance fields from code review: certified population, unscoreable policy,
+    // exact risksieve version pin, and per-query exclusion reasons (not just counts).
+    assert!(
+        cert["certified_population"]
+            .as_str()
+            .unwrap()
+            .contains("ScoreGap")
+    );
+    assert!(
+        cert["unscoreable_policy"]
+            .as_str()
+            .unwrap()
+            .contains("always abstained")
+    );
+    assert!(
+        cert["risksieve_dependency"]
+            .as_str()
+            .unwrap()
+            .contains("0.2.0")
+    );
+    assert!(cert["excluded_calibration_queries"].is_array());
+    assert!(cert["excluded_test_queries"].is_array());
+
+    let report = std::fs::read_to_string(out.path("report.md")).unwrap();
+    assert!(report.contains("Certified population"));
 }
 
 /// The property test the spec calls out explicitly: a high-confidence correct query is
@@ -300,6 +326,46 @@ fn unscoreable_test_query_is_reported_as_abstained_not_dropped() {
     let abstained = std::fs::read_to_string(out.path("abstained.csv")).unwrap();
     assert!(abstained.contains("t0"));
     assert!(abstained.contains("unscoreable"));
+}
+
+// Note: a CLI-level "duplicate query_id" test was considered and dropped. `io::group_by_query`
+// (which every CLI command routes through) groups CSV rows by query_id into one QueryRanking
+// per unique id -- two CSV rows sharing a query_id are just two candidates of the same query,
+// not a duplicate QueryRanking. `certify_batch`'s new duplicate-query_id hard error is
+// reachable only by a direct caller of the public core API who assembles `Vec<QueryRanking>`
+// themselves (e.g. concatenating two datasets) -- covered by
+// `duplicate_test_query_id_is_a_hard_error` / `duplicate_calibration_query_id_is_a_hard_error`
+// in `masstrust-core`'s `risksieve_backend::tests`, not here.
+
+/// Confirms the `risksieve` version recorded in `certificate.json` (via `RISKSIEVE_VERSION`
+/// in `certify_batch.rs`) can never silently drift from what's actually compiled: both
+/// `Cargo.toml`s exact-pin `risksieve = "=0.2.0"`, so Cargo.lock can only ever resolve to
+/// exactly that version -- this reads Cargo.lock directly to confirm the pin is doing its job,
+/// rather than trusting the exact-pin syntax alone.
+#[test]
+fn risksieve_version_matches_the_exact_pin_in_cargo_lock() {
+    let lock_path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"));
+    let lock = std::fs::read_to_string(&lock_path).unwrap();
+    let mut lines = lock.lines().peekable();
+    let mut resolved_version = None;
+    while let Some(line) = lines.next() {
+        if line.trim() == "name = \"risksieve\"" {
+            if let Some(version_line) = lines.next() {
+                resolved_version = version_line
+                    .trim()
+                    .strip_prefix("version = \"")
+                    .and_then(|s| s.strip_suffix('"'))
+                    .map(str::to_string);
+            }
+            break;
+        }
+    }
+    assert_eq!(
+        resolved_version.as_deref(),
+        Some("0.2.0"),
+        "Cargo.lock's resolved risksieve version must match the exact pin; if this fails, \
+         either the pin was loosened or RISKSIEVE_VERSION in certify_batch.rs is stale"
+    );
 }
 
 /// Repo hygiene check: `tasks/*.md` is the user's private, local-only progress file (long

@@ -46,14 +46,16 @@ pub struct ScoreabilityCounts {
     pub scoreable: usize,
 }
 
-/// A test query that never reached `risksieve` because it was unscoreable under the chosen
-/// method. Always abstained; never silently dropped.
+/// A query excluded from certification before it ever reached `risksieve`, and why. Used
+/// symmetrically for both calibration and test — see `docs/risksieve-integration.md`'s
+/// "Unscoreable queries" section: the exclusion rule is the same predicate on both sides, so
+/// the same type records both.
 #[derive(Debug, Clone)]
-pub struct UnscoreableTestQuery {
+pub struct ExcludedQuery {
     /// The query's identifier.
     pub query_id: String,
     /// Always `"unscoreable"` today; a distinct field (rather than a bare bool) so future
-    /// abstention reasons can be added without changing callers that only match on presence.
+    /// exclusion reasons can be added without changing callers that only match on presence.
     pub reason: &'static str,
 }
 
@@ -74,8 +76,15 @@ pub struct ScoreableTestQuery {
 pub const SCORE_ORIENTATION_NOTE: &str = "risksieve_score = -masstrust_confidence (risksieve: lower score = more trustworthy; masstrust: higher confidence = more trustworthy)";
 
 /// Human-readable note on how `test_scores`' index space (and therefore
-/// `certificate.parameter`) is ordered.
-pub const QUERY_ORDERING_POLICY: &str = "query_id ascending (masstrust's existing io::group_by_query order), filtered to queries scoreable under the chosen method — the identical predicate applied to calibration and test";
+/// `certificate.parameter`) is ordered. `certify_batch` normalizes to this order itself —
+/// callers of the public core API do not need `io::group_by_query` for the guarantee to hold,
+/// only for reading CSVs in the first place.
+pub const QUERY_ORDERING_POLICY: &str = "query_id ascending (normalized by certify_batch itself, regardless of input order), filtered to queries scoreable under the chosen method — the identical predicate applied to calibration and test";
+
+/// Human-readable note on what `unscoreable`-excluded queries mean, carried alongside the
+/// certificate for the same reason as [`SCORE_ORIENTATION_NOTE`].
+pub const UNSCOREABLE_POLICY_NOTE: &str =
+    "unscoreable queries are outside this certificate and are always abstained";
 
 /// Full result of one `certify_batch` run: the `risksieve` certificate plus everything
 /// masstrust needs to map it back to `query_id`s and report on it without editorializing.
@@ -100,7 +109,11 @@ pub struct BatchCertification {
     /// *is* the index space `certificate.parameter` refers into.
     pub scoreable_test_queries: Vec<ScoreableTestQuery>,
     /// Test queries excluded before reaching `risksieve`, always abstained.
-    pub unscoreable_test_queries: Vec<UnscoreableTestQuery>,
+    pub excluded_test_queries: Vec<ExcludedQuery>,
+    /// Calibration queries excluded before reaching `risksieve` (unscoreable under `method`).
+    /// Recorded — not just counted — so a third party can reconstruct exactly which
+    /// calibration data the certificate's guarantee actually rests on.
+    pub excluded_calibration_queries: Vec<ExcludedQuery>,
 }
 
 impl BatchCertification {
@@ -111,6 +124,13 @@ impl BatchCertification {
             .iter()
             .map(|&i| self.scoreable_test_queries[i].query_id.as_str())
             .collect()
+    }
+
+    /// Human-readable description of the population this certificate's guarantee actually
+    /// applies to — **not** "all test queries". See [`UNSCOREABLE_POLICY_NOTE`] for what
+    /// happens to everything outside it.
+    pub fn certified_population(&self) -> String {
+        format!("queries scoreable under {:?}", self.scoring_method)
     }
 }
 
@@ -128,6 +148,26 @@ fn top1_is_correct(ranking: &QueryRanking) -> Option<bool> {
 fn correctness_loss(is_correct: bool) -> ClosedUnitInterval {
     let value = if is_correct { 0.0 } else { 1.0 };
     ClosedUnitInterval::new("loss", value).expect("0.0 and 1.0 are always valid")
+}
+
+/// Sorts `rankings` by `query_id` ascending and rejects duplicates — the ordering
+/// [`QUERY_ORDERING_POLICY`] documents is produced *here*, not assumed from however the
+/// caller happened to pass its input. A duplicate `query_id` is a hard error: it would
+/// otherwise silently make `certificate.parameter`'s indices ambiguous (which of two
+/// same-named queries did index `i` refer to?), and duplicate calibration rows would silently
+/// double-count that observation in `risksieve`'s calibration set.
+fn sorted_unique_by_query_id(
+    rankings: &[QueryRanking],
+    on_duplicate: impl Fn(String) -> MasstrustError,
+) -> Result<Vec<&QueryRanking>, MasstrustError> {
+    let mut sorted: Vec<&QueryRanking> = rankings.iter().collect();
+    sorted.sort_by(|a, b| a.query_id.cmp(&b.query_id));
+    for pair in sorted.windows(2) {
+        if pair[0].query_id == pair[1].query_id {
+            return Err(on_duplicate(pair[0].query_id.clone()));
+        }
+    }
+    Ok(sorted)
 }
 
 /// Runs SCoRE-SDR batch certification (`risksieve::selective::sdr::certify` or
@@ -158,13 +198,29 @@ pub fn certify_batch(
     let alpha = OpenUnitInterval::new("alpha", alpha)?;
     let gamma = OpenUnitInterval::new("gamma", gamma)?;
 
-    let calibration_total = calibration.len();
+    // Ordering is normalized here, not assumed from the caller's input order — see
+    // QUERY_ORDERING_POLICY and sorted_unique_by_query_id's docs. This must happen before
+    // scoreability filtering so the filtered order is itself query_id-ascending too.
+    let calibration_sorted = sorted_unique_by_query_id(calibration, |query_id| {
+        MasstrustError::DuplicateCalibrationQueryId { query_id }
+    })?;
+    let test_sorted = sorted_unique_by_query_id(test, |query_id| {
+        MasstrustError::DuplicateTestQueryId { query_id }
+    })?;
+
+    let calibration_total = calibration_sorted.len();
     let mut calibration_losses = Vec::new();
     let mut calibration_scores = Vec::new();
-    for ranking in calibration {
+    let mut excluded_calibration_queries = Vec::new();
+    for ranking in calibration_sorted {
         let Some(confidence) = compute_confidence(ranking, method) else {
             // Unscoreable calibration query: excluded under the same predicate as test,
-            // not a separately-defined rule. See docs/risksieve-integration.md.
+            // not a separately-defined rule. See docs/risksieve-integration.md. Recorded,
+            // not just counted, so the certified population is fully reconstructable.
+            excluded_calibration_queries.push(ExcludedQuery {
+                query_id: ranking.query_id.clone(),
+                reason: "unscoreable",
+            });
             continue;
         };
         if !confidence.is_finite() {
@@ -185,11 +241,11 @@ pub fn certify_batch(
     }
     let calibration_scoreable = calibration_losses.len();
 
-    let test_total = test.len();
+    let test_total = test_sorted.len();
     let mut scoreable_test_queries = Vec::new();
-    let mut unscoreable_test_queries = Vec::new();
+    let mut excluded_test_queries = Vec::new();
     let mut test_scores = Vec::new();
-    for ranking in test {
+    for ranking in test_sorted {
         match compute_confidence(ranking, method) {
             Some(confidence) => {
                 if !confidence.is_finite() {
@@ -206,7 +262,7 @@ pub fn certify_batch(
                 });
             }
             None => {
-                unscoreable_test_queries.push(UnscoreableTestQuery {
+                excluded_test_queries.push(ExcludedQuery {
                     query_id: ranking.query_id.clone(),
                     reason: "unscoreable",
                 });
@@ -247,7 +303,8 @@ pub fn certify_batch(
             scoreable: test_scoreable,
         },
         scoreable_test_queries,
-        unscoreable_test_queries,
+        excluded_test_queries,
+        excluded_calibration_queries,
     })
 }
 
@@ -354,9 +411,11 @@ mod tests {
     // --- deterministic ordering & index<->query_id mapping ---
 
     #[test]
-    fn scoreable_test_queries_preserve_input_order_not_a_reordering() {
-        // Deliberately not query_id-sorted -- certify_batch must not introduce its own
-        // sort; determinism is the caller's (io::group_by_query's) responsibility.
+    fn scoreable_test_queries_are_normalized_to_query_id_ascending_regardless_of_input_order() {
+        // Deliberately not query_id-sorted on input -- certify_batch itself must produce
+        // ascending order (QUERY_ORDERING_POLICY), not merely pass through whatever order the
+        // caller happened to supply. This is load-bearing for any caller of the public core
+        // API that doesn't route through io::group_by_query first.
         let calibration = extreme_batch("c", 20);
         let test = vec![
             ranking("t3", 0.8, true),
@@ -377,7 +436,47 @@ mod tests {
             .iter()
             .map(|q| q.query_id.as_str())
             .collect();
-        assert_eq!(ids, vec!["t3", "t1", "t2"]);
+        assert_eq!(ids, vec!["t1", "t2", "t3"]);
+    }
+
+    #[test]
+    fn duplicate_test_query_id_is_a_hard_error() {
+        let calibration = extreme_batch("c", 20);
+        let mut test = extreme_batch("t", 4);
+        test.push(ranking("t0", 0.8, true)); // duplicates the first query from extreme_batch
+        let err = certify_batch(
+            &calibration,
+            &test,
+            ScoringMethod::ScoreGap,
+            0.5,
+            0.3,
+            Construction::Coupled,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            MasstrustError::DuplicateTestQueryId { ref query_id } if query_id == "t0"
+        ));
+    }
+
+    #[test]
+    fn duplicate_calibration_query_id_is_a_hard_error() {
+        let mut calibration = extreme_batch("c", 20);
+        calibration.push(ranking("c0", 0.8, true)); // duplicates the first query
+        let test = extreme_batch("t", 4);
+        let err = certify_batch(
+            &calibration,
+            &test,
+            ScoringMethod::ScoreGap,
+            0.5,
+            0.3,
+            Construction::Coupled,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            MasstrustError::DuplicateCalibrationQueryId { ref query_id } if query_id == "c0"
+        ));
     }
 
     #[test]
@@ -446,6 +545,25 @@ mod tests {
         .unwrap();
         assert!(result.score_orientation_note.contains('-'));
         assert!(result.query_ordering_policy.contains("query_id ascending"));
+    }
+
+    #[test]
+    fn certified_population_names_the_scoring_method_not_all_queries() {
+        let calibration = extreme_batch("c", 4);
+        let test = extreme_batch("t", 2);
+        let result = certify_batch(
+            &calibration,
+            &test,
+            ScoringMethod::ScoreGap,
+            0.3,
+            0.3,
+            Construction::Coupled,
+        )
+        .unwrap();
+        let population = result.certified_population();
+        assert!(population.contains("ScoreGap"));
+        assert!(population.contains("scoreable"));
+        assert!(UNSCOREABLE_POLICY_NOTE.contains("always abstained"));
     }
 
     // --- score ties: masstrust-side determinism (risksieve itself proves tie symmetry) ---
@@ -529,9 +647,9 @@ mod tests {
             Construction::Coupled,
         )
         .unwrap();
-        assert_eq!(result.unscoreable_test_queries.len(), 1);
-        assert_eq!(result.unscoreable_test_queries[0].query_id, "unscoreable_q");
-        assert_eq!(result.unscoreable_test_queries[0].reason, "unscoreable");
+        assert_eq!(result.excluded_test_queries.len(), 1);
+        assert_eq!(result.excluded_test_queries[0].query_id, "unscoreable_q");
+        assert_eq!(result.excluded_test_queries[0].reason, "unscoreable");
         assert!(
             result
                 .scoreable_test_queries
@@ -562,6 +680,12 @@ mod tests {
         .unwrap();
         assert_eq!(result.calibration_counts.total, 21);
         assert_eq!(result.calibration_counts.scoreable, 20);
+        assert_eq!(result.excluded_calibration_queries.len(), 1);
+        assert_eq!(
+            result.excluded_calibration_queries[0].query_id,
+            "unscoreable_c"
+        );
+        assert_eq!(result.excluded_calibration_queries[0].reason, "unscoreable");
     }
 
     #[test]

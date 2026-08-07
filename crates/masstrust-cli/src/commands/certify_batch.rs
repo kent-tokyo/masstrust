@@ -1,15 +1,26 @@
 use std::collections::HashSet;
 use std::fs;
+use std::fs::File;
+use std::io::{BufReader, Read};
 use std::path::PathBuf;
 
 use anyhow::bail;
 use clap::Args;
-use masstrust_core::risksieve_backend::{self, BatchCertification, Construction};
+use masstrust_core::risksieve_backend::{
+    self, BatchCertification, Construction, ExcludedQuery, UNSCOREABLE_POLICY_NOTE,
+};
 use masstrust_core::{ScoringMethod, io};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::parse_scoring_method;
+
+/// Single source of truth for the `risksieve` dependency version recorded in
+/// `certificate.json`. Kept consistent with the exact-pinned `version = "=0.2.0"` in both
+/// crates' `Cargo.toml` by `risksieve_version_matches_the_exact_pin_in_cargo_lock`
+/// (`tests/certify_batch.rs`) — if the pin is ever changed without updating this constant (or
+/// vice versa), that test fails instead of the certificate silently drifting from reality.
+const RISKSIEVE_VERSION: &str = "0.2.0";
 
 #[derive(Args)]
 pub struct CertifyBatchArgs {
@@ -62,10 +73,20 @@ fn construction_str(c: Construction) -> &'static str {
     }
 }
 
+/// Streams the file through the hasher in fixed-size chunks rather than reading it fully into
+/// memory first — matters once prediction CSVs reach tens or hundreds of MB.
 fn sha256_file(path: &PathBuf) -> anyhow::Result<String> {
-    let bytes = fs::read(path)?;
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
     let mut hasher = Sha256::new();
-    hasher.update(&bytes);
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let n = reader.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
     Ok(format!("{:x}", hasher.finalize()))
 }
 
@@ -100,19 +121,40 @@ struct InputFileHashes {
     test_sha256: String,
 }
 
+#[derive(Serialize)]
+struct ExcludedQueryRow<'a> {
+    query_id: &'a str,
+    reason: &'a str,
+}
+
+fn excluded_rows(excluded: &[ExcludedQuery]) -> Vec<ExcludedQueryRow<'_>> {
+    excluded
+        .iter()
+        .map(|e| ExcludedQueryRow {
+            query_id: &e.query_id,
+            reason: e.reason,
+        })
+        .collect()
+}
+
 /// Certificate output schema. Deliberately separate from `PolicyFile` (see
 /// `docs/risksieve-integration.md`) — never merged into it, never versioned alongside it.
 #[derive(Serialize)]
 struct CertificateEnvelope<'a> {
     schema_version: &'static str,
     masstrust_version: &'static str,
-    risksieve_dependency: &'static str,
+    risksieve_dependency: String,
     guarantee_kind: String,
     target_risk: f64,
     certified_upper_bound: f64,
     scoring_method: String,
     score_orientation: &'a str,
     query_ordering_policy: &'a str,
+    /// Plain-language statement of the population this certificate's guarantee actually
+    /// applies to (queries scoreable under `scoring_method`) — **not** all submitted queries.
+    certified_population: String,
+    /// What happens to everything outside `certified_population`.
+    unscoreable_policy: &'a str,
     alpha: f64,
     gamma: f64,
     construction: &'static str,
@@ -124,6 +166,14 @@ struct CertificateEnvelope<'a> {
     abstained_count: usize,
     selected_query_ids: Vec<&'a str>,
     selected_indices: &'a [usize],
+    /// Calibration queries excluded before reaching `risksieve` (unscoreable), by `query_id`
+    /// and reason — lets a third party reconstruct exactly which calibration data the
+    /// certificate's guarantee rests on.
+    excluded_calibration_queries: Vec<ExcludedQueryRow<'a>>,
+    /// Test queries excluded before reaching `risksieve` (unscoreable), by `query_id` and
+    /// reason. Distinct from `not_selected_by_certificate` abstentions, which *did* reach
+    /// `risksieve` — see `abstained.csv`'s `reason` column for that distinction.
+    excluded_test_queries: Vec<ExcludedQueryRow<'a>>,
     input_files: InputFileHashes,
     command: String,
     created_by: &'static str,
@@ -238,7 +288,7 @@ fn write_outputs(
             });
         }
     }
-    for uq in &certification.unscoreable_test_queries {
+    for uq in &certification.excluded_test_queries {
         abstained_rows.push(AbstainedRow {
             query_id: &uq.query_id,
             reason: uq.reason,
@@ -255,13 +305,15 @@ fn write_outputs(
     let envelope = CertificateEnvelope {
         schema_version: "1.0",
         masstrust_version: env!("CARGO_PKG_VERSION"),
-        risksieve_dependency: "risksieve 0.2.0 (crates.io)",
+        risksieve_dependency: format!("risksieve {RISKSIEVE_VERSION} (crates.io)"),
         guarantee_kind: format!("{:?}", certification.certificate.guarantee),
         target_risk: certification.certificate.target_risk,
         certified_upper_bound: certification.certificate.certified_upper_bound,
         scoring_method: method_name.clone(),
         score_orientation: certification.score_orientation_note,
         query_ordering_policy: certification.query_ordering_policy,
+        certified_population: certification.certified_population(),
+        unscoreable_policy: UNSCOREABLE_POLICY_NOTE,
         alpha: args.alpha,
         gamma: args.gamma,
         construction: construction_name,
@@ -274,6 +326,8 @@ fn write_outputs(
             - certification.certificate.parameter.len(),
         selected_query_ids,
         selected_indices: &certification.certificate.parameter,
+        excluded_calibration_queries: excluded_rows(&certification.excluded_calibration_queries),
+        excluded_test_queries: excluded_rows(&certification.excluded_test_queries),
         input_files: InputFileHashes {
             calibration_path: args.calibration.display().to_string(),
             calibration_sha256: sha256_file(&args.calibration)?,
@@ -372,6 +426,39 @@ fn render_report(
         s.push_str("Zero selections is a valid certificate, not an error — see risksieve's own `empty_batch_is_a_valid_empty_certificate` test and `docs/guarantees.md`.\n\n");
     }
 
+    s.push_str("## Certified population\n\n");
+    s.push_str(&format!(
+        "**{}.** {}. See `excluded_calibration_queries`/`excluded_test_queries` in `certificate.json` for the full, reconstructable list of what was excluded and why — not just the counts above.\n\n",
+        certification.certified_population(),
+        UNSCOREABLE_POLICY_NOTE
+    ));
+    if !certification.excluded_calibration_queries.is_empty() {
+        s.push_str(&format!(
+            "Calibration queries excluded ({}): ",
+            certification.excluded_calibration_queries.len()
+        ));
+        let ids: Vec<&str> = certification
+            .excluded_calibration_queries
+            .iter()
+            .map(|e| e.query_id.as_str())
+            .collect();
+        s.push_str(&ids.join(", "));
+        s.push_str("\n\n");
+    }
+    if !certification.excluded_test_queries.is_empty() {
+        s.push_str(&format!(
+            "Test queries excluded ({}, always abstained, never reached risksieve): ",
+            certification.excluded_test_queries.len()
+        ));
+        let ids: Vec<&str> = certification
+            .excluded_test_queries
+            .iter()
+            .map(|e| e.query_id.as_str())
+            .collect();
+        s.push_str(&ids.join(", "));
+        s.push_str("\n\n");
+    }
+
     s.push_str("## Post-hoc descriptive result\n\n");
     match realized_risk {
         Some(risk) => {
@@ -446,5 +533,53 @@ fn print_summary(
     match realized_risk {
         Some(risk) => eprintln!("  realized risk (post-hoc, descriptive only): {risk}"),
         None => eprintln!("  realized risk:        not computed (no test labels)"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write as _;
+
+    fn naive_sha256(path: &PathBuf) -> String {
+        let bytes = fs::read(path).unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        format!("{:x}", hasher.finalize())
+    }
+
+    #[test]
+    fn streaming_hash_matches_full_buffer_hash_for_a_small_file() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(b"masstrust certify-batch streaming hash test\n")
+            .unwrap();
+        let path = f.path().to_path_buf();
+        assert_eq!(sha256_file(&path).unwrap(), naive_sha256(&path));
+    }
+
+    #[test]
+    fn streaming_hash_matches_full_buffer_hash_for_a_multi_megabyte_file() {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        // ~25 MB, larger than sha256_file's 64 KB chunk size by several orders of magnitude,
+        // and larger than a single BufReader fill -- exercises the read/hash loop across many
+        // iterations rather than validating only the single-chunk case above.
+        let chunk = vec![0x5au8; 1024 * 1024];
+        for i in 0..25u8 {
+            let mut c = chunk.clone();
+            c[0] = i; // vary content slightly per chunk so it isn't one repeated byte
+            f.write_all(&c).unwrap();
+        }
+        let path = f.path().to_path_buf();
+        assert_eq!(sha256_file(&path).unwrap(), naive_sha256(&path));
+    }
+
+    #[test]
+    fn risksieve_version_matches_the_exact_pin() {
+        // certificate.json's risksieve_dependency field is built from this constant --
+        // pinning `=0.2.0` in Cargo.toml means Cargo cannot resolve any other version, so
+        // this constant and what's actually compiled cannot drift apart silently. See also
+        // risksieve_version_matches_the_exact_pin_in_cargo_lock (tests/certify_batch.rs) for
+        // the same invariant checked from the workspace's actual Cargo.lock.
+        assert_eq!(RISKSIEVE_VERSION, "0.2.0");
     }
 }
