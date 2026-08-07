@@ -26,3 +26,4 @@ Changelog = "https://github.com/kent-tokyo/masstrust/blob/main/CHANGELOG.md"
 [tool.maturin]
 manifest-path = "crates/masstrust-py/Cargo.toml"
 features = ["extension-module"]
+include = ["LICENSE-MIT", "LICENSE-APACHE"]
