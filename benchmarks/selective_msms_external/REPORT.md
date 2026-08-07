@@ -14,9 +14,15 @@ below, since it is the ceiling against which "how much did we accept" should be 
 ## Split
 
 Group split by `molecule_group_id` (== 14-char 2D InChIKey block), seed 42, ~50/50 by group
-count. `masstrust validate-split` confirms 0 query_id overlap, 0 candidate-pool overlap between
-halves. Full assignment in `split_manifest.json` (immutable, written before any method below was
-run).
+count. `masstrust validate-split` confirms 0 query_id overlap and, more to the point, **0
+target-InChIKey overlap** (`target_inchikey_overlap: 0`, `target_inchikey_skeleton_overlap: 0` —
+the WARNING branch that fires on target-molecule leakage never triggered): no target molecule's
+queries appear in both halves, which is what the grouped split was built to guarantee.
+(`validate-split`'s `candidate_pool_overlap` also reports 0, but that check is vacuous here by
+construction — each row's `candidate_id` is a synthetic `{query_id}_top1`, so the calibration and
+evaluation candidate-ID sets are disjoint regardless of which queries land in which half. It is
+not evidence of anything and is omitted from the table below.) Full assignment in
+`split_manifest.json` (immutable, written before any method below was run).
 
 | | queries | molecule groups |
 |---|---|---|
@@ -43,28 +49,42 @@ numbers in this report should be read as a formally verified guarantee on this e
 ## Results
 
 alpha = gamma throughout. Binomial confidence level fixed at 0.95 (pre-registered, not swept).
+For the three threshold methods, "calibration" columns are what `masstrust calibrate` found on
+the calibration half (8,520 queries); "evaluation" columns are that same fixed threshold applied
+to the held-out evaluation half (9,036 queries) via `masstrust evaluate` — shown side by side so
+the calibration→evaluation gap below is checkable, not asserted.
 
-| alpha | method | selected/accepted | coverage | observed/realized risk | risk vs target | runtime (s) |
-|---|---|---|---|---|---|---|
-| 0.01 | empirical | 34 / 9036 | 0.00376 | 0.0588 (2/34 errors) | **exceeds target** (0.0588 > 0.01) | 0.035 |
-| 0.01 | binomial (95% Wilson) | 0 / 9036 | 0.0 | n/a (abstain-all) | n/a | 0.036 |
-| 0.01 | legacy-crc | 34 / 9036 | 0.00376 | 0.0588 (2/34 errors) | **exceeds target** (0.0588 > 0.01) | 0.030 |
-| 0.01 | risksieve SDR, coupled | 0 / 9036 | 0.0 | realized 0.0 | n/a (0 selected) | 0.52 |
-| 0.01 | risksieve SDR, independent | 0 / 9036 | 0.0 | realized 0.0 | n/a (0 selected) | 249.97 |
-| 0.05 | empirical | 34 / 9036 | 0.00376 | 0.0588 (2/34 errors) | **exceeds target** (0.0588 > 0.05) | 0.032 |
-| 0.05 | binomial (95% Wilson) | 0 / 9036 | 0.0 | n/a (abstain-all) | n/a | 0.029 |
-| 0.05 | legacy-crc | 34 / 9036 | 0.00376 | 0.0588 (2/34 errors) | **exceeds target** (0.0588 > 0.05) | 0.030 |
-| 0.05 | risksieve SDR, coupled | 0 / 9036 | 0.0 | realized 0.0 | n/a (0 selected) | 0.61 |
-| 0.05 | risksieve SDR, independent | 0 / 9036 | 0.0 | realized 0.0 | n/a (0 selected) | 219.54 |
-| 0.10 | empirical | 55 / 9036 | 0.00609 | 0.0909 (5/55 errors) | within target (0.0909 < 0.10) | 0.032 |
-| 0.10 | binomial (95% Wilson) | 0 / 9036 | 0.0 | n/a (abstain-all) | n/a | 0.032 |
-| 0.10 | legacy-crc | 55 / 9036 | 0.00609 | 0.0909 (5/55 errors) | within target (0.0909 < 0.10) | 0.031 |
-| 0.10 | risksieve SDR, coupled | **69** / 9036 | 0.00764 | realized **0.1159** | above target on this realized batch (0.1159 > 0.10; not a certificate violation — see below) | 0.45 |
-| 0.10 | risksieve SDR, independent | 0 / 9036 | 0.0 | realized 0.0 | n/a (0 selected) | 160.34 |
+| alpha | method | cal accepted/total | cal risk | eval accepted/total | eval coverage | eval risk (realized) | risk vs target | runtime (s) |
+|---|---|---|---|---|---|---|---|---|
+| 0.01 | empirical | 18/8520 | 0.0000 | 34/9036 | 0.00376 | 0.0588 (2/34) | **exceeds target** (0.0588 > 0.01) | 0.035 |
+| 0.01 | binomial (95% Wilson) | 0/8520 (+inf) | n/a | 0/9036 | 0.0 | n/a (abstain-all) | n/a | 0.036 |
+| 0.01 | legacy-crc | 18/8520 | 0.0000 | 34/9036 | 0.00376 | 0.0588 (2/34) | **exceeds target** (0.0588 > 0.01) | 0.030 |
+| 0.01 | risksieve SDR, coupled | — (joint, not a threshold) | — | 0/9036 | 0.0 | realized 0.0 | n/a (0 selected) | 0.52 |
+| 0.01 | risksieve SDR, independent | — | — | 0/9036 | 0.0 | realized 0.0 | n/a (0 selected) | 249.97 |
+| 0.05 | empirical | 18/8520 | 0.0000 | 34/9036 | 0.00376 | 0.0588 (2/34) | **exceeds target** (0.0588 > 0.05) | 0.032 |
+| 0.05 | binomial (95% Wilson) | 0/8520 (+inf) | n/a | 0/9036 | 0.0 | n/a (abstain-all) | n/a | 0.029 |
+| 0.05 | legacy-crc | 18/8520 | 0.0000 | 34/9036 | 0.00376 | 0.0588 (2/34) | **exceeds target** (0.0588 > 0.05) | 0.030 |
+| 0.05 | risksieve SDR, coupled | — | — | 0/9036 | 0.0 | realized 0.0 | n/a (0 selected) | 0.61 |
+| 0.05 | risksieve SDR, independent | — | — | 0/9036 | 0.0 | realized 0.0 | n/a (0 selected) | 219.54 |
+| 0.10 | empirical | 27/8520 | 0.0741 (2/27) | 55/9036 | 0.00609 | 0.0909 (5/55) | within target (0.0909 < 0.10) | 0.032 |
+| 0.10 | binomial (95% Wilson) | 0/8520 (+inf) | n/a | 0/9036 | 0.0 | n/a (abstain-all) | n/a | 0.032 |
+| 0.10 | legacy-crc | 27/8520 | 0.0741 (2/27) | 55/9036 | 0.00609 | 0.0909 (5/55) | within target (0.0909 < 0.10) | 0.031 |
+| 0.10 | risksieve SDR, coupled | — | — | **69**/9036 | 0.00764 | realized **0.1159** | above target on this realized batch (0.1159 > 0.10; not a certificate violation — see below) | 0.45 |
+| 0.10 | risksieve SDR, independent | — | — | 0/9036 | 0.0 | realized 0.0 | n/a (0 selected) | 160.34 |
+
+At alpha ∈ {0.01, 0.05}, `empirical`/`legacy-crc` find the identical calibration threshold
+(0.998955) accepting 18/8520 with **0 observed errors on calibration** — the same threshold then
+accepts 34/9036 on evaluation with 2 errors (0.0588). That 0-error → 2-error jump on a ~20-30-item
+accepted set is the sampling-variance story below, now visible rather than asserted. Calibration
+curve (constant across alpha, a property of the full calibration set): AURC 0.734250, E-AURC
+0.141181.
 
 `risksieve_sdr_*`: `guarantee_kind = SelectiveDeploymentRisk` in every run, `certified_upper_bound
-== alpha` in every run (risksieve's own convention), `certified_population = "queries scoreable
-under MaxProb"`.
+== alpha` in every run — confirmed directly from `risksieve`'s `assemble_certificate` (`sdr.rs`:
+`certified_upper_bound: alpha.get()`, i.e. always exactly alpha for this guarantee kind, not a
+computed bound), `certified_population = "queries scoreable under MaxProb"`. `certify-batch`
+consumes both CSVs jointly per call rather than calibrating a reusable threshold, so it has no
+calibration-only row to show.
 
 ## Reading these numbers
 

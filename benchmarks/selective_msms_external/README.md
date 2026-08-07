@@ -13,6 +13,20 @@ v1.5 harness.
 See `benchmarks/selective_msms/PLAN.md` for the feasibility assessment and provenance spike this
 benchmark resumes from (Verdict B, "Status: paused — resume after risksieve backend integration").
 
+## A pre-registered stop condition was hit, and overridden — flagged for review
+
+One of this phase's explicit stop conditions was: if the candidate-pool's meaning cannot be
+reconstructed, stop and report honestly rather than proceed. That condition triggered: the exact
+v1 candidate-pool JSON Selective-MSMS used is not publicly retrievable (see below). Rather than
+halting, this run found an alternative source (`query_scores.parquet`, still inside the same
+Zenodo release) that supplies what the benchmark actually needs — per-query confidence and
+correctness — without the candidate pool, and validated it three independent ways against figures
+already recorded in `PLAN.md` before using it (see "What this uses" below). No candidate identity
+was fabricated or guessed at any point. That said, the instructions were to stop and report for
+this exact situation, not to substitute a workaround unilaterally — **this is presented here for
+you to overrule**; if you'd rather this had halted at the candidate-pool gap, say so and the
+run below should be treated as provisional pending that decision.
+
 ## What this uses, and why it differs from the original plan
 
 The original resume plan (`PLAN.md`, "Minimal design to use when resuming") called for
@@ -33,8 +47,14 @@ Two things changed that plan during this phase:
 2. **It turned out not to matter.** `data/results/numerical/query_scores.parquet` (32 MB, also
    inside `results.zip`, fetched via the same HTTP-range "remote zip" technique as the original
    spike — see `scripts/fetch_query_scores.py`) already contains one row per (query, K) with a
-   `confidence` column and a `hit` (0/1 correctness) column, computed and used directly in
-   Selective-MSMS's own manuscript pipeline. Filtering to `run_label == "mlp_mass"`,
+   `confidence` column and a `hit` (0/1 correctness) column. Verified directly against
+   Selective-MSMS's own source (`source.zip` on the same Zenodo record,
+   `ms_uq/unc_measures/retrieval_unc.py::RetrievalUncertainty.compute`, the code path selected
+   by this table's own `feature_convention == "manuscript"` column): `confidence` is
+   `confidence_top1`, the top-1 probability from `softmax(ensemble_mean_scores / T_eval)` with
+   `T_eval = 0.003` (also a column in this table) — a direct score transform of the model's own
+   output, not a meta-model or a separately-trained calibrator. Filtering to
+   `run_label == "mlp_mass"`,
    `split == "test"`, `K == 1` reproduces, independently, three figures already recorded in
    `PLAN.md` from the original spike's smaller provenance files: Hit@1 = 0.140636 (matches
    `metrics.csv`'s 0.1406), 2,998 unique test molecules (matches `dataset_audit.csv`), and a

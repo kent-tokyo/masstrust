@@ -12,8 +12,9 @@ needs exactly what this row provides -- one confidence score and one correctness
 query -- and nothing more.
 
 `score` and `probability` are both set to the artifact's own `confidence` column (present in
-query_scores.parquet, used in Selective-MSMS's own manuscript pipeline). This is a deliberate
-choice to reuse their own labeled trust signal rather than construct a new one; it is NOT a
+query_scores.parquet): the top-1 probability from softmax(ensemble_mean_scores / T_eval),
+T_eval=0.003 -- verified against Selective-MSMS's own source, see ../README.md. This is a
+deliberate choice to reuse their own score transform rather than construct a new one; it is NOT a
 claim that this is a calibrated posterior in masstrust's sense (see
 benchmarks/selective_msms/PLAN.md's original field-mapping table on that exact point) -- it is
 the thing that gets fed into masstrust's OWN calibration methods, which is what this benchmark
