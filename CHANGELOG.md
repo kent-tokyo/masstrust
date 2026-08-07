@@ -11,6 +11,15 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Optional, feature-gated `risksieve` backend (`--features risksieve`): `masstrust
+  certify-batch`, a theorem-backed batch selective-deployment certification workflow built on
+  `risksieve` 0.2.0's SCoRE-SDR controller (Bai and Jin, 2026, arXiv:2603.24704). Independent
+  of `calibrate`/`apply` — not a reusable threshold policy, no changes to `PolicyFile` or the
+  existing `CalibrationMethod`s. See `docs/risksieve-integration.md` for the full design
+  rationale (estimand, score orientation, unscoreable-query/exchangeability policy) and the
+  README's new "Batch selective-deployment certification" section for usage. Disabled by
+  default; the existing CLI, API, and policy JSON schema are unaffected when the feature is
+  off.
 - MassSpecGym benchmark harness provenance hardening (pre-real-run):
   - `run_baseline.py` now reloads the best (not final-epoch) Lightning checkpoint via
     `ckpt_path="best"` before exporting val/test predictions, so the recorded

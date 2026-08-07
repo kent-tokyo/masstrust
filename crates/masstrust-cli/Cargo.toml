@@ -15,18 +15,30 @@ path = "src/main.rs"
 
 [features]
 plot = ["dep:plotters"]
+risksieve = ["dep:risksieve", "masstrust-core/risksieve"]
 
 [dependencies]
 masstrust-core = { path = "../masstrust-core", version = "0.1.0" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+
+[dependencies.risksieve]
+version = "0.2.0"
+optional = true
+features = ["serde"]
 
 [dependencies.plotters]
 version = "0.3"
 optional = true
 default-features = false
 features = ["svg_backend", "line_series"]
+
+[[test]]
+name = "certify_batch"
+path = "tests/certify_batch.rs"
+required-features = ["risksieve"]
 
 [dev-dependencies]
 tempfile = "3"

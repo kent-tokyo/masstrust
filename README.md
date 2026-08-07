@@ -243,6 +243,49 @@ masstrust calibrate labeled.csv --score score-gap --error-rate 0.05 --method crc
 
 ---
 
+## Batch selective-deployment certification (`risksieve`, optional)
+
+`masstrust certify-batch` is a **feature-gated** (`--features risksieve`), independent
+workflow, built on the [`risksieve`](https://crates.io/crates/risksieve) crate's SCoRE-SDR
+controller (Bai and Jin, 2026, arXiv:2603.24704). It is not exposed at all in a default build.
+
+**This is not a reusable threshold policy.** Unlike `calibrate`/`apply`, it computes a fresh
+selection for one specific calibration set + test batch pair every time you run it — the
+default construction's e-values depend on the whole test batch's composition, so the same
+calibration data can select a different subset of a different test batch. See
+[`docs/risksieve-integration.md`](docs/risksieve-integration.md) for why this is a separate
+command rather than a new `CalibrationMethod`, and exactly what
+`GuaranteeKind::SelectiveDeploymentRisk` does and does not claim.
+
+```bash
+masstrust certify-batch \
+  --calibration val.csv \
+  --test test.csv \
+  --score score-gap \
+  --alpha 0.05 \
+  --gamma 0.05 \
+  --construction coupled \
+  --accepted accepted.csv \
+  --abstained abstained.csv \
+  --certificate certificate.json \
+  --report report.md
+```
+
+- The risk guarantee is conditional on stated assumptions (exchangeability of calibration and
+  the *entire* test batch jointly, a bounded 0/1 loss, and so on) — `certificate.json` and
+  `report.md` both record them in full; read them before trusting a number.
+- **Zero selections is a normal, valid certificate**, not an error — SCoRE-SDR's bound holds
+  trivially on an empty selected set.
+- If `test.csv` happens to carry `is_correct` labels, the report also prints a **realized
+  selective risk** — a post-hoc descriptive statistic computed from this one batch's actual
+  outcomes. It is kept clearly separate from the theorem-backed certificate above it and never
+  described as validating (or invalidating) that certificate.
+
+`masstrust`'s existing calibration methods (`empirical`/`binomial`/`crc`) are untouched by this
+feature — see the scientific caveats below, which apply to `certify-batch` too.
+
+---
+
 ## Understanding risk and coverage
 
 The **risk-coverage curve** summarises the accept/abstain tradeoff:

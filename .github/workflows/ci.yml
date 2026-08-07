@@ -38,11 +38,17 @@ jobs:
           --all-targets --all-features
           -- -D warnings
 
-      - name: test
+      - name: test (all features)
         run: >
           cargo test
           --workspace --exclude masstrust-py
           --all-features
+
+      - name: test (no default features)
+        run: >
+          cargo test
+          --workspace --exclude masstrust-py
+          --no-default-features
 
       - name: doc
         run: >
