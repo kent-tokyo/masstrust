@@ -12,3 +12,7 @@ __pycache__/
 benchmarks/massspecgym/data/
 benchmarks/massspecgym/report/
 benchmarks/massspecgym/.venv*/
+
+# benchmarks/selective_msms_external generated artifacts (external-source data dump, per-run outputs)
+benchmarks/selective_msms_external/data/
+benchmarks/selective_msms_external/results/runs/
