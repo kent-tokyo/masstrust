@@ -4,9 +4,24 @@ build-backend = "maturin"
 
 [project]
 name = "masstrust"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.8"
 description = "Calibrated trust and abstention for MS/MS molecular annotations"
+readme = "README.md"
+license = { text = "MIT OR Apache-2.0" }
+authors = [{ name = "kent-tokyo" }]
+keywords = ["mass-spectrometry", "metabolomics", "calibration", "selective-prediction"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Chemistry",
+]
+
+[project.urls]
+Repository = "https://github.com/kent-tokyo/masstrust"
+Homepage = "https://github.com/kent-tokyo/masstrust"
+Changelog = "https://github.com/kent-tokyo/masstrust/blob/main/CHANGELOG.md"
 
 [tool.maturin]
 manifest-path = "crates/masstrust-py/Cargo.toml"
