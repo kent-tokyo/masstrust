@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pre-registered calibration/evaluation split for the Selective-MSMS external-prediction
+"""Pre-registered calibration/evaluation split for the Selective-MSMS external query-confidence
 benchmark. Grouped by `molecule_group_id` (confirmed identical to the query's 14-character
 2D-InChIKey block in ../data/query_scores.parquet) so the same target molecule's queries never
 span both halves.
@@ -14,6 +14,8 @@ import os
 import sys
 
 import pandas as pd
+
+from validate_source_schema import validate_mlp_mass_test_k1, validate_source_file
 
 SEED = 42
 CALIBRATION_FRACTION = 0.5  # by molecule group count, not query count
@@ -42,8 +44,9 @@ def main():
             "before re-running this script."
         )
 
+    validate_source_file(QUERY_SCORES_PATH)
     df = pd.read_parquet(QUERY_SCORES_PATH)
-    sub = df[(df.run_label == RUN_LABEL) & (df.split == SPLIT) & (df.K == 1)].copy()
+    sub = validate_mlp_mass_test_k1(df, run_label=RUN_LABEL, split=SPLIT).copy()
 
     groups = sorted(sub.molecule_group_id.unique().tolist())
     rng = __import__("random").Random(SEED)
@@ -65,14 +68,29 @@ def main():
     assignments.sort(key=lambda a: a["query_id"])
 
     manifest = {
-        "benchmark": "selective_msms_external",
+        "benchmark": "selective_msms_external_query_confidence",
         "purpose": (
-            "External-prediction compatibility benchmark comparing masstrust's legacy "
+            "Selective-MSMS external query-confidence benchmark: compares masstrust's legacy "
             "calibration methods against risksieve-backed SCoRE-SDR certification, on the "
-            "same fixed confidence score. Not a Selective-MSMS competitor-parity benchmark; "
-            "does not reproduce Selective-MSMS's own split (none exists for this model "
-            "artifact -- see benchmarks/selective_msms/PLAN.md, 'Split reconstruction')."
+            "same fixed query-level confidence score published by Selective-MSMS. Not a "
+            "Selective-MSMS competitor-parity benchmark; does not reproduce Selective-MSMS's "
+            "own split (none exists for this model artifact -- see "
+            "benchmarks/selective_msms/PLAN.md, 'Split reconstruction'); does not import or "
+            "reconstruct candidate-level rankings -- see 'scope' below."
         ),
+        "scope": {
+            "source_representation": "query_scores.parquet",
+            "source_granularity": "query_level",
+            "candidate_ranking_available": False,
+            "candidate_pool_artifact_used": False,
+            "candidate_identity_reconstructed": False,
+            "confidence_source": "confidence_top1",
+            "note": (
+                "candidate_id in the derived CSVs (e.g. '{query_id}_top1') is adapter "
+                "scaffolding to satisfy masstrust's CSV contract, not a reconstructed or "
+                "real candidate identity."
+            ),
+        },
         "source_artifact": {
             "zenodo_record": "19108280",
             "zip_member": "data/results/numerical/query_scores.parquet",

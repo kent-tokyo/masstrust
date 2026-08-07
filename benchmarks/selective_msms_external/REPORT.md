@@ -1,8 +1,10 @@
-# Selective-MSMS external-prediction compatibility benchmark: results
+# Selective-MSMS external query-confidence benchmark: results
 
 **Not a competitor-parity benchmark. Not the official MassSpecGym v1.5 benchmark. Does not
-reproduce Selective-MSMS's own split.** See `README.md` for full scope and the forbidden-framing
-list this report adheres to.
+reproduce Selective-MSMS's own split. Does not import or reconstruct candidate-level rankings —
+this benchmark operates on query-level confidence and correctness only.** See `README.md` for
+full scope (including the "What this benchmark does/does not demonstrate" lists and `scope`
+metadata) and the forbidden-framing list this report adheres to.
 
 Data: `data/results/numerical/query_scores.parquet` from Selective-MSMS's Zenodo release
 (record 19108280), filtered to `run_label == "mlp_mass"`, `split == "test"`, `K == 1`
@@ -37,14 +39,20 @@ construction — see `README.md`'s note on why this artifact reduces to one conf
 query). `calibration_scoreable = calibration_total = 8,520`,
 `test_scoreable = test_total = 9,036` for every method below.
 
-## Known assumption violation
+## Known limitation: whole-batch exchangeability is not established
 
-The molecule-grouped split intentionally makes calibration and evaluation disjoint on an
-attribute (`molecule_group_id`) correlated with confidence/correctness. This means the
-exchangeability assumption underlying SCoRE-SDR's certificate (and, informally, the other
-methods' calibration-transfers-to-evaluation logic) does not formally hold here. It applies
-identically to all five methods below — see `README.md` for the full statement. **None of the
-numbers in this report should be read as a formally verified guarantee on this exact split.**
+Query-level joint exchangeability is not established because multiple spectra are clustered
+within target molecules. The molecule-grouped split prevents target leakage, but does not by
+itself establish the whole-batch exchangeability required by SCoRE-SDR. The group split was
+chosen to prevent target leakage, not to engineer a particular difficulty distribution; group
+membership was assigned by an unweighted random shuffle (seed 42), not selected to produce a
+deliberate difficulty shift. `risksieve` computed the certificate objects below correctly from
+the inputs given to them — this is not a claim of a bug in `risksieve`. What is not established
+is that this benchmark's own data-generating structure (clustered, molecule-correlated spectra)
+satisfies the theorem's exchangeability hypothesis. This applies identically to all five methods
+below, so it does not favor any one of them — see `README.md` for the full statement. Treat this
+as an **assumption-unverified diagnostic benchmark**: none of the numbers in this report should
+be read as a formally verified guarantee on this exact split.
 
 ## Results
 
@@ -88,14 +96,22 @@ calibration-only row to show.
 
 ## Reading these numbers
 
-**Selection is thin everywhere, and that is the finding, not a bug.** With an 86.4% top-1 error
+**Summary of the main result:** Hit@1 ≈ 14.1% (top-1 error ≈ 85.9–86.4%). At alpha ≤ 0.10, every
+method's selection is thin — coverage tops out at 0.76% (SDR coupled, alpha=0.10). `binomial`'s
+abstain-all at every alpha is a normal, fail-closed result, not a malfunction. `empirical`/
+`legacy-crc`'s evaluation-side risk excess at low alpha is a descriptive result reflecting
+small-sample variance (see the calibration-vs-evaluation columns above), not a proof either
+method is broken. SDR coupled's single realized batch landing above alpha=0.10 is not a
+certificate violation (see below). SDR independent's 0-selection here is this fixture's result,
+not a general statement about which construction has more power (see above).
+
+**Selection is thin everywhere, and that is the finding, not a bug.** With an ≈86% top-1 error
 rate, none of the five methods can accept a meaningful fraction of queries at alpha ∈
-{0.01, 0.05, 0.10} without violating (or, for SDR, risking) their target. Coverage tops out at
-0.76% (SDR coupled, alpha=0.10). This is consistent with the instructions that opened this
-phase: *"0件選択は実装失敗ではありません。保証付き方式が現在のconfidence scoreではpower不足だった、
-という重要なbenchmark結果です"* — zero (or near-zero) selection reflects that the confidence
-score has too little separating power at this base error rate, not a defect in either the
-legacy or risksieve-backed implementation.
+{0.01, 0.05, 0.10} without violating (or, for SDR, risking) their target. This is consistent with
+the instructions that opened this phase: *"0件選択は実装失敗ではありません。保証付き方式が現在の
+confidence scoreではpower不足だった、という重要なbenchmark結果です"* — zero (or near-zero)
+selection reflects that the confidence score has too little separating power at this base error
+rate, not a defect in either the legacy or risksieve-backed implementation.
 
 **`empirical` and `legacy-crc` are identical at every alpha tested.** CRC's finite-sample
 correction is `1/(n+1) ≈ 0.000117` at n=8,520 — small enough that it didn't move the
@@ -119,24 +135,48 @@ landing above alpha is consistent with the theorem, the same way a 95% CI can fa
 any one draw. `realized_selective_risk` is reported here as the descriptive statistic it is, not
 as evidence for or against the certificate.
 
-**`risksieve SDR independent` selected nothing at any alpha, including where `coupled` selected
-69.** This matches theory: the independent construction (Equation 4.1) scores each test point
-using only its own e-value against the calibration set, discarding the cross-test-point
-information the coupled construction (Equation 5.1) uses — strictly less powerful by
-construction, and it shows here as a real power gap at this batch size, not just an asymptotic
-one.
+**On this dataset and pre-registered configuration, the independent construction selected fewer
+queries than the coupled construction (0 vs. 69 at alpha=0.10; 0 vs. 0 at alpha ∈ {0.01, 0.05}).
+Neither construction is known to dominate the other in general** — `risksieve` does not claim
+general dominance either way, and this benchmark does not either. The independent construction
+(Equation 4.1) scores each test point using only its own e-value against the calibration set,
+discarding the cross-test-point information the coupled construction (Equation 5.1) uses; that
+difference in what information each construction uses is a documented design distinction, not by
+itself a proof that one always selects at least as much as the other. What's reported here is
+this fixture's outcome, not a general power ranking.
 
-**`risksieve SDR independent`'s runtime (160–250s) vs. `coupled`'s (0.45–0.61s) is a genuine,
-reportable cost, not a benchmark artifact.** `certify_independent` calls
-`risk_adjusted_evalue` once per test point, and that function re-sorts the full calibration set
-(plus the test point) on every call — `O(n_test × n_cal log n_cal)` — versus `coupled`'s
-documented `O(n + m)` single scan (see `docs/risksieve-integration.md`, "`certify` (the default,
-paper-exact coupled construction...)"). At `n_cal=8,520, n_test=9,036` that is roughly
-`9,036 × 8,520 × log₂(8,520) ≈ 1×10⁹` comparisons, consistent with the observed ~3–4 minute
-wall time. `docs/risksieve-integration.md` notes `certify_independent` "does not have
-[the batch-composition-dependence] property... but is still a one-batch decision, not a reusable
-threshold" — it does not comment on relative performance; the cost measured here is new
-information from this benchmark, not a restatement of that doc.
+**`risksieve SDR independent`'s runtime (single-run measurement: 160–250s, this hardware/build)
+vs. `coupled`'s (single-run measurement: 0.45–0.61s) is a genuine, reportable cost on this
+fixture, not a benchmark artifact — but the ~300–500× ratio itself should not be read as a
+general or theoretical constant.** Verified directly against `risksieve` 0.2.0's source
+(`src/selective/sdr.rs`, `src/selective/evalue.rs`, `src/selective/coupled.rs`), not asserted:
+
+- `certify_independent` calls `risk_adjusted_evalue` once per test point (`m` calls). Each call
+  builds a `candidates` list of up to `O(n)` breakpoint values and, for every candidate, does a
+  `.rev().find(...)` linear scan over the `O(n)` grouped calibration values
+  (`largest_feasible_index`) — `O(n)` candidates × `O(n)` scan = **`O(n²)` per call**, on top of
+  an `O(n log n)` sort that is not the dominant term. Total: **`O(m·n²)`**.
+- `certify` (coupled) sorts the pooled calibration+test scores once (`O((n+m) log(n+m))`), then
+  for each of the `m` test points does an `O(n+m)` linear scan (`t0`/`t1` search) and, on the
+  (data-dependent) branch where a tie-breaking suffix-maximum is needed, another `O(n+m)` pass —
+  **`O((n+m) log(n+m) + m(n+m))`** overall, not the `O(n+m)` this report previously (incorrectly)
+  claimed.
+
+Both are super-linear in the batch size; independent's `n²` term is what makes it far more
+expensive than coupled's `n+m` term at `n≈8,520`, `m≈9,036`, but this is this fixture's
+consequence of those two formulas, not a claim that coupled is always `O(n)`-times cheaper — the
+data-dependent suffix-maximum branch in coupled means its typical-case cost can vary by dataset.
+Each construction was run once per alpha (not repeated for a median/range) — see "What this does
+not show."
+
+## Conclusion
+
+**The dominant bottleneck on this artifact is the weak upstream top-1 accuracy and limited
+separation of its confidence score, not the absence of a more permissive downstream controller.**
+No amount of calibration/certification-method sophistication recovers meaningful coverage from a
+confidence score whose underlying retriever is right on the top pick only ~14% of the time at
+these risk targets. This holds identically for masstrust's legacy methods and for
+risksieve-backed SCoRE-SDR.
 
 ## What this does not show
 
@@ -146,4 +186,8 @@ can be reproduced from their artifacts without any new engineering"), not evalua
 does not show an AURC-equivalent metric for the SDR methods — SDR selection is not comparable to
 a risk-coverage curve point by point, only its selected-count/coverage/realized-risk tuple at
 each alpha, which is what's reported above. This does not validate SDR's certificate (a realized
-batch's risk landing above or below alpha does not confirm or refute the theorem).
+batch's risk landing above or below alpha does not confirm or refute the theorem). This does not
+show a general power ranking between SCoRE-SDR's coupled and independent constructions, or a
+general runtime ratio between them — both are single-fixture, single-run observations (see
+above). This does not import, reconstruct, or claim candidate-level ranking identity for this
+artifact (see `README.md`, "Scope metadata").
