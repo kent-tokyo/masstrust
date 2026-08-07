@@ -1,12 +1,26 @@
 # Feasibility report: importing Selective-MSMS's public predictions for a masstrust comparison
 
-**Status: assessment complete, approved, and paused.** No `masstrust-core` changes have been
-made and no importer code has been written. **Final verdict: B — reproducible
-external-prediction benchmark. This is explicitly NOT a competitor-parity benchmark** — see
-"Final verdict" below. Verdict B is approved, but the importer itself is **deliberately deferred**
-until after masstrust's statistics backend migrates to `risksieve` (see "Status: paused" near the
-end of this document) — building the importer against the current calibration backend now would
-risk immediate rework once that migration lands.
+**Status: assessment completed and resumed.** The risksieve backend integration was completed in
+PR #1 (`059a584`). The original candidate-ranking importer path described below could not be
+completed: the exact Selective-MSMS v1 candidate-pool artifact this plan assumed would be
+downloadable is not publicly retrievable (checked directly — see PR #2's investigation). A
+narrower **external query-confidence benchmark** was completed instead in PR #2, using the
+published `query_scores.parquet` artifact. It uses query-level confidence and top-1 correctness
+only; it does **not** reconstruct candidate rankings, candidate identities, or candidate-pool
+parity — see `benchmarks/selective_msms_external/README.md` and `REPORT.md` for what was
+actually built and measured.
+
+**Final outcome: reproducible external query-confidence benchmark. Not a candidate-ranking
+importer and not a competitor-parity benchmark.**
+
+Everything below this point is the original feasibility report and the provenance spike that
+followed it, kept as the historical record of how this conclusion was reached — including the
+now-superseded assumption that the v1 candidate-pool JSON would be downloadable, and the
+`scores.pt`-opening plan that PR #2 found a way to avoid entirely. Sections describing the
+deferred/paused state or the planned candidate-ranking importer are historical: they describe
+what was planned *at the time*, not the current state. See "Status: paused — resume after
+risksieve backend integration" further down for the specific note on how that plan diverged from
+what was actually built.
 
 ---
 
@@ -250,11 +264,21 @@ further download not done in this pass.
 
 ---
 
-## Revised disk/download estimate
+## Revised disk/download estimate (historical — superseded, see status note at top)
+
+**This section's ~290 MB estimate assumed the exact v1 candidate-pool JSON was publicly
+retrievable. That assumption was later disproved** (PR #2 checked the full HuggingFace commit
+history for `roman-bushuiev/MassSpecGym`'s candidate-pool file; only one version has ever
+existed there, and it does not match the hash Selective-MSMS's own `input_files.tsv` records as
+what was actually used). The original candidate-ranking importer this section scoped therefore
+remains infeasible from currently public artifacts — it was not built, and this estimate does
+not describe what PR #2 actually needed (PR #2 used only `query_scores.parquet`, ~32 MB, not
+`scores.pt` and not the candidate-pool JSON). Kept below as the historical record of the
+estimate at spike time.
 
 The original report's 3.18 GB (`results.zip` alone) vs. 18 GB (full regeneration) estimates are
-both now superseded — a real importer for the `mass_capped/ensemble_mlp_mass` artifact
-specifically would need only:
+both now superseded — a real candidate-ranking importer for the `mass_capped/ensemble_mlp_mass`
+artifact specifically would have needed only:
 
 | file | size | status |
 |---|---|---|
@@ -269,7 +293,13 @@ this pass, per your instructions.
 
 ---
 
-## Final verdict: **B — Reproducible external-prediction benchmark**
+## Spike verdict (historical, as of this spike): **B — Reproducible external-prediction benchmark**
+
+This was the spike's own conclusion about the *candidate-ranking importer* path it was
+investigating — not the current final word on this document (see the status note at the top).
+That importer path turned out to be infeasible once the v1 candidate-pool JSON proved publicly
+unretrievable (see "Revised disk/download estimate" above). The verdict below is preserved as
+written at spike time.
 
 > The ranking table can be reconstructed, but their exact split or method outputs cannot. Use it
 > only to demonstrate masstrust on an external retriever; do not claim method parity.
@@ -311,7 +341,18 @@ ask — not implied by this report.
 
 ---
 
-## Status: paused — resume after risksieve backend integration
+## Status: paused — resume after risksieve backend integration (historical; resumed, see below)
+
+**This section is preserved as written when the importer was paused.** risksieve backend
+integration has since completed (PR #1, `059a584`), and this document's plan was resumed — but
+what actually got built (PR #2, "Selective-MSMS external query-confidence benchmark") is **not**
+the candidate-ranking importer described in this section's own "Minimal design to use when
+resuming" diagram below. That diagram's `scores.pt` + candidate-pool-JSON path was found
+infeasible (the candidate-pool JSON is not publicly retrievable — see "Revised disk/download
+estimate" above); PR #2 used `query_scores.parquet` (query-level confidence + top-1 correctness
+only) instead. See `benchmarks/selective_msms_external/README.md` for what was actually built,
+including its own explicit "what this does/does not demonstrate" scope statement. The bullets and
+diagram immediately below describe the *original* plan, not the executed benchmark.
 
 Verdict B is approved. The importer is **not** being built now. Decision and reasoning:
 
@@ -341,7 +382,8 @@ Verdict B is approved. The importer is **not** being built now. Decision and rea
 - This benchmark is handled in a separate namespace and a separate report from the official
   MassSpecGym v1.5 benchmark (`benchmarks/massspecgym/`) — never merged into it.
 
-**Minimal design to use when resuming**, once risksieve integration is in place:
+**Minimal design to use when resuming** (as planned at the time — see the note above for how the
+executed benchmark actually differs), once risksieve integration is in place:
 
 ```
 scores.pt
@@ -363,10 +405,19 @@ scores.pt
 
 The comparison this produces is not "masstrust vs. Selective-MSMS" — it is **masstrust's old
 risk-control path vs. its risksieve-backed path, evaluated on the same external predictions**.
-Selective-MSMS's artifact just supplies real, already-published, non-self-generated rankings to
-run that comparison against, sidestepping this machine's training-throughput blocker entirely.
+Selective-MSMS's artifact was intended to supply real, already-published, non-self-generated
+candidate rankings to run that comparison against, sidestepping this machine's
+training-throughput blocker entirely. **As executed in PR #2, it instead supplies real,
+already-published query-level confidence and top-1 correctness** — the candidate-ranking layer
+this paragraph describes was not reconstructed; see the note at the top of this section.
 
-## Remaining unknowns
+## Remaining unknowns (historical — apply only to the abandoned candidate-ranking path)
+
+These unknowns are about `scores.pt`'s internal structure and the candidate-pool artifact, which
+the completed query-confidence benchmark (PR #2) does not use at all. They are not required to
+reproduce that benchmark — see `benchmarks/selective_msms_external/README.md` instead. Preserved
+here as the record of what was still unresolved when the candidate-ranking importer path was
+paused.
 
 - **`scores.pt`'s literal internal shape/row-order** — the single largest gap. Answerable safely
   in a future step via `torch.load(path, weights_only=True)` (PyTorch's own built-in restricted
@@ -378,12 +429,15 @@ run that comparison against, sidestepping this machine's training-throughput blo
 - **Individual ensemble-member training seeds** for `ensemble_mlp_mass`'s 5 members — not
   surfaced in anything fetched.
 
-## What this update deliberately does not do
+## What this update deliberately does not do (historical — describes this spike, not PR #2)
 
-No full-artifact download (`results.zip` in full, `checkpoints.zip`, or the "18 GB" regenerated
-predictions). No importer code. No `masstrust-core` changes. No claim of "same prediction, same
+At the time of the original feasibility spike, this update deliberately did not do a
+full-artifact download (`results.zip` in full, `checkpoints.zip`, or the "18 GB" regenerated
+predictions), write importer code, change `masstrust-core`, or claim "same prediction, same
 split" relative to masstrust's pinned v1.5 harness, under any outcome. `scores.pt` was
-deliberately not opened, for the safety reason stated above.
+deliberately not opened, for the safety reason stated above. This does not describe the completed
+query-confidence benchmark's own scope statement — see
+`benchmarks/selective_msms_external/README.md` for that.
 
 ---
 
@@ -411,7 +465,9 @@ conclusion.
 See the spike's "Downloaded-file inventory" and §1/§5 above for the now-confirmed internal
 structure. The original report's discovery that `results.zip` (3.18 GB) is sufficient (no 18 GB
 regeneration needed) still holds, and is further refined by the "Revised disk/download estimate"
-above (~290 MB actually needed, not even the full 3.18 GB).
+above (~290 MB estimated at spike time for the candidate-ranking importer — since found
+infeasible; see that section's own note for why, and the top-of-document status for what was
+built instead).
 
 ## 3. Licensing and redistribution
 
@@ -432,6 +488,8 @@ to the authors.
 
 ## 6. Cost and risk (original estimates; see "Revised disk/download estimate" above for current)
 
-Original estimates assumed `results.zip` in full (3.18 GB) might be needed. The spike shows a
-real importer needs roughly 290 MB total (`scores.pt` + the v1 candidate-pool JSON), not the
-full archive.
+Original estimates assumed `results.zip` in full (3.18 GB) might be needed. The spike found that
+a candidate-ranking importer would need roughly 290 MB total (`scores.pt` + the v1 candidate-pool
+JSON), not the full archive — that estimate was itself later superseded once the candidate-pool
+JSON proved unretrievable (see "Revised disk/download estimate" above); the benchmark actually
+built (PR #2) needed only the ~32 MB `query_scores.parquet`.
