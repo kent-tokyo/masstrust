@@ -2,6 +2,8 @@ use clap::{Parser, Subcommand};
 
 mod commands;
 mod plot;
+#[cfg(feature = "risksieve")]
+use commands::certify_batch;
 use commands::{apply, batch, calibrate, compare, curve, drift, evaluate, validate_split};
 
 #[derive(Parser)]
@@ -33,6 +35,10 @@ enum Commands {
     Evaluate(evaluate::EvaluateArgs),
     /// Check for data leakage between calibration and test sets
     ValidateSplit(validate_split::ValidateSplitArgs),
+    /// Theorem-backed batch selective-deployment certification (risksieve SCoRE-SDR).
+    /// Not a reusable threshold policy — see `docs/risksieve-integration.md`.
+    #[cfg(feature = "risksieve")]
+    CertifyBatch(certify_batch::CertifyBatchArgs),
 }
 
 fn main() {
@@ -46,6 +52,8 @@ fn main() {
         Commands::Drift(args) => drift::run(args),
         Commands::Evaluate(args) => evaluate::run(args),
         Commands::ValidateSplit(args) => validate_split::run(args),
+        #[cfg(feature = "risksieve")]
+        Commands::CertifyBatch(args) => certify_batch::run(args),
     };
     if let Err(e) = result {
         eprintln!("error: {e}");

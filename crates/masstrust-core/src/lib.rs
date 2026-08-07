@@ -67,6 +67,8 @@ pub mod error;
 pub mod io;
 pub mod metrics;
 pub mod policy;
+#[cfg(feature = "risksieve")]
+pub mod risksieve_backend;
 pub mod scoring;
 pub mod types;
 

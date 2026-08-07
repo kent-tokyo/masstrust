@@ -28,4 +28,37 @@ pub enum MasstrustError {
         "Parquet input detected but masstrust was compiled without the 'parquet' feature; recompile with --features parquet"
     )]
     ParquetNotEnabled,
+    #[cfg(feature = "risksieve")]
+    #[error("risksieve backend error: {0}")]
+    RiskSieve(#[from] risksieve::RiskSieveError),
+    #[cfg(feature = "risksieve")]
+    #[error(
+        "calibration query '{query_id}' is scoreable under {method:?} but has no is_correct label — labels are never silently treated as correct or incorrect"
+    )]
+    MissingCalibrationLabel {
+        query_id: String,
+        method: crate::types::ScoringMethod,
+    },
+    #[cfg(feature = "risksieve")]
+    #[error(
+        "non-finite confidence ({value}) for query '{query_id}' under {method:?} — refusing to silently treat as unscoreable or abstain"
+    )]
+    NonFiniteConfidence {
+        query_id: String,
+        method: crate::types::ScoringMethod,
+        value: f64,
+    },
+    #[cfg(feature = "risksieve")]
+    #[error(
+        "certificate selected query '{query_id}' but no is_correct label for it was found when resolving realized selective risk"
+    )]
+    MissingRealizedLabel { query_id: String },
+    #[cfg(feature = "risksieve")]
+    #[error(
+        "duplicate query_id '{query_id}' in calibration data — each query must appear exactly once"
+    )]
+    DuplicateCalibrationQueryId { query_id: String },
+    #[cfg(feature = "risksieve")]
+    #[error("duplicate query_id '{query_id}' in test data — each query must appear exactly once")]
+    DuplicateTestQueryId { query_id: String },
 }

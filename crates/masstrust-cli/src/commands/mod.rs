@@ -1,6 +1,8 @@
 pub mod apply;
 pub mod batch;
 pub mod calibrate;
+#[cfg(feature = "risksieve")]
+pub mod certify_batch;
 pub mod compare;
 pub mod curve;
 pub mod drift;
