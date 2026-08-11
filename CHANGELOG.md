@@ -9,6 +9,31 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `masstrust certify-batch --loss-column <name>` (requires `--features risksieve`): certify a
+  SCoRE-SDR batch against any `[0, 1]`-bounded precomputed loss (e.g. Tanimoto dissimilarity,
+  scaffold mismatch) instead of only binary top-1 correctness. Required on every scoreable
+  calibration query; genuinely optional on `--test` — an unlabeled test set still certifies
+  successfully, it just can't produce a post-hoc realized-risk number. `certificate.json`/
+  `report.md` gain `loss_kind`/`loss_label`/`loss_column`/`loss_domain` provenance fields.
+  Resolving realized risk under a different loss than what was certified is a hard error
+  (`MasstrustError::LossSourceMismatch`), not a silently mismatched number. No new
+  `masstrust-core`/`masstrust-cli` dependency — the loss value itself is always caller-supplied
+  data (via new `io::read_query_loss_column`, CSV and Parquet), never computed by masstrust. See
+  `docs/graded-loss-integration.md`. `Candidate`'s public shape is unchanged; `certify_batch`/
+  `resolve_realized_losses` keep their exact pre-existing signatures as compatibility wrappers
+  around new `certify_batch_with_loss`/`resolve_realized_losses_with_loss`.
+- `benchmarks/dna_adductomics/`: literature/data reconnaissance for cancer-relevant
+  DNA-adductomics MS/MS selective-annotation feasibility (colibactin as the requested killer use
+  case) — see `FEASIBILITY.md`. **Verdict: NO-GO as a benchmark**, both for colibactin
+  specifically (no public candidate-ranking-ready data found) and for the best general
+  substitute found (8 distinct experimental compounds, below this project's own pre-registered
+  minimum-n floor). A real-data pipeline-verification preflight (explicitly not a benchmark —
+  see `PREFLIGHT_REPORT.md`) demonstrates the adapter → schema → `validate-split` → `calibrate`
+  → `evaluate` pipeline against real, CC-BY 4.0-licensed third-party MS/MS data, with zero
+  `masstrust-core` changes needed to carry nine domain provenance columns.
+
 ---
 
 ## [0.2.0] — 2026-08-08
