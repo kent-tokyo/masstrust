@@ -61,4 +61,35 @@ pub enum MasstrustError {
     #[cfg(feature = "risksieve")]
     #[error("duplicate query_id '{query_id}' in test data — each query must appear exactly once")]
     DuplicateTestQueryId { query_id: String },
+    #[cfg(feature = "risksieve")]
+    #[error(
+        "query '{query_id}' has no value in loss source '{column}' — precomputed losses are never silently treated as missing or zero"
+    )]
+    MissingLossColumn { query_id: String, column: String },
+    #[cfg(feature = "risksieve")]
+    #[error(
+        "loss value {value} for query '{query_id}' in column '{column}' is not a finite value in [0, 1] — refusing to silently clamp or exclude"
+    )]
+    LossOutOfRange {
+        query_id: String,
+        column: String,
+        value: f64,
+    },
+    #[cfg(feature = "risksieve")]
+    #[error(
+        "column '{column}' has a non-numeric value {raw:?} for query '{query_id}' — refusing to silently treat malformed data as missing"
+    )]
+    InvalidLossValue {
+        query_id: String,
+        column: String,
+        raw: String,
+    },
+    #[cfg(feature = "risksieve")]
+    #[error(
+        "loss source mismatch: this certificate was computed against '{certified}', but realized risk was requested against '{requested}' — resolving realized risk under a different loss than what was certified would silently misrepresent what the certificate's guarantee is about"
+    )]
+    LossSourceMismatch {
+        certified: String,
+        requested: String,
+    },
 }
