@@ -44,11 +44,11 @@ fn parse_cal(s: &str) -> PyResult<CalibrationMethod> {
 fn policy_to_dict<'py>(py: Python<'py>, pf: &PolicyFile) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
     d.set_item("version", &pf.version)?;
-    let scoring_json = serde_json::to_value(&pf.scoring_method).map_err(map_err)?;
+    let scoring_json = serde_json::to_value(pf.scoring_method).map_err(map_err)?;
     d.set_item("scoring_method", scoring_json.as_str().unwrap_or(""))?;
     d.set_item("threshold", pf.threshold)?;
     d.set_item("target_error_rate", pf.target_error_rate)?;
-    let cal_json = serde_json::to_value(&pf.calibration_method).map_err(map_err)?;
+    let cal_json = serde_json::to_value(pf.calibration_method).map_err(map_err)?;
     d.set_item("calibration_method", cal_json.as_str().unwrap_or(""))?;
     d.set_item("confidence_level", pf.confidence_level)?;
     d.set_item("created_by", &pf.created_by)?;
