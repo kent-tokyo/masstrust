@@ -101,7 +101,7 @@ explicit small-n disclaimer on every number — that file, not a re-run's local 
 `scripts/selftest.py` is the one runnable check that doesn't need the real dataset: it builds a
 tiny synthetic `database.xlsx`/`experimental.html`/`predicted.html` triple with the same column
 layout as the real files and runs the full `export_candidates.py → validate_data.py →
-run_benchmark.py → generate_report.py` chain against it, asserting on schema (lowercase
+run_preflight.py → generate_report.py` chain against it, asserting on schema (lowercase
 `true`/`false`, non-trivial candidate pools), split disjointness, and report generation — pipeline
 *mechanics*, not scientific correctness on real data (that's what `PREFLIGHT_REPORT.md` is for).
 Run it before ever pointing the pipeline at the real dataset, or in any environment without
@@ -121,7 +121,7 @@ pip install -r requirements.txt
 python scripts/prepare_data.py --out-dir ./data          # downloads + checksums the CC-BY 4.0 dataset
 python scripts/export_candidates.py --data-dir ./data     # matchms scoring → masstrust CSV
 python scripts/validate_data.py --data-dir ./data        # schema + compound-disjoint leakage check
-python scripts/run_benchmark.py --data-dir ./data --out-dir ./report
+python scripts/run_preflight.py --data-dir ./data --out-dir ./report
 python scripts/generate_report.py --data-dir ./data --report-dir ./report
 ```
 

@@ -6,7 +6,7 @@ no real dataset download, no `benchmarks/dna_adductomics/data/` dependency. Mirr
 Builds a synthetic `database.xlsx` / `experimental.html` / `predicted.html` triple with the exact
 column layout `adductomics_data.py` expects (confirmed against the real files during Phase A
 reconnaissance -- see FEASIBILITY.md ss2.1), then runs export_candidates.py -> validate_data.py ->
-run_benchmark.py -> generate_report.py against it exactly as a real run would, and asserts on the
+run_preflight.py -> generate_report.py against it exactly as a real run would, and asserts on the
 real output files. This checks pipeline *mechanics* (schema, split disjointness, CLI wiring,
 report generation) -- it says nothing about scientific correctness on real data, which is what
 PREFLIGHT_REPORT.md (real data, separately) is for.
@@ -184,9 +184,9 @@ def main():
         assert calib_ids and test_ids, "both split halves must be non-empty"
         assert calib_ids.isdisjoint(test_ids), "calibration/test query_id overlap -- leakage"
 
-        print("4. run_benchmark.py (masstrust compare/calibrate/evaluate)...")
-        r = run_py("run_benchmark.py", "--data-dir", data_dir, "--out-dir", report_dir)
-        assert r.returncode == 0, f"run_benchmark.py failed:\n{r.stdout}\n{r.stderr}"
+        print("4. run_preflight.py (masstrust compare/calibrate/evaluate)...")
+        r = run_py("run_preflight.py", "--data-dir", data_dir, "--out-dir", report_dir)
+        assert r.returncode == 0, f"run_preflight.py failed:\n{r.stdout}\n{r.stderr}"
         assert os.path.exists(os.path.join(report_dir, "run_summary.json"))
         assert os.path.exists(os.path.join(report_dir, "manifest.json"))
 

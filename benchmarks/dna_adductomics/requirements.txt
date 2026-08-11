@@ -1,4 +1,5 @@
-# Pinned for reproducibility. This benchmark is deliberately kept out of the Rust workspace
+# Pinned for reproducibility. This preflight (not a benchmark -- see FEASIBILITY.md ss2.4) is
+# deliberately kept out of the Rust workspace
 # (see README.md) and isolated from benchmarks/massspecgym's torch/rdkit stack -- it only needs
 # a spectral-similarity scorer (matchms) and spreadsheet/table parsing.
 matchms==0.33.1

@@ -15,7 +15,7 @@ number below is real (real spectra, real `matchms` scoring, real `masstrust` CLI
 disclaimer is about what the numbers do *not* license claiming, not about their authenticity.
 
 Reproduce with `python3 scripts/prepare_data.py && python3 scripts/export_candidates.py --data-dir ./data
-&& python3 scripts/validate_data.py --data-dir ./data && python3 scripts/run_benchmark.py --data-dir ./data
+&& python3 scripts/validate_data.py --data-dir ./data && python3 scripts/run_preflight.py --data-dir ./data
 --out-dir ./report && python3 scripts/generate_report.py --data-dir ./data --report-dir ./report` (see
 `README.md`). `report/` (including a regenerated copy of everything below) is gitignored and
 regenerated fresh by that command; this file is the one committed, point-in-time record.
