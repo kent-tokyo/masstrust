@@ -87,34 +87,41 @@ selective-annotation benchmark" (§19's gate is not met — see `FEASIBILITY.md`
     (`preflight`/`benchmark`) — `generate_report.py` must refuse to present `preflight` output as
     a benchmark result, exactly like `benchmarks/massspecgym/generate_report.py` already does.
 
-## What the preflight covers (planned — follow-up PR, not part of this documentation PR)
+## What the preflight covers
 
-**This PR is documentation only: no `scripts/`, no `requirements.txt`, no downloaded data, no
-generated report exist here or on `main` yet.** A local exploratory run of the preflight
-described below has been completed and established real end-to-end compatibility (see
-`FEASIBILITY.md` §2.4) — that is preliminary, local evidence informing this design, not something
-committed to this repository. The reproducible adapter scripts and an explicitly-labeled
-`PREFLIGHT_REPORT.md` are planned for a separate follow-up PR
-(`test: add DNA-adductomics external-data preflight`).
+`scripts/` implements only the preflight — real data, `run_kind=preflight` stamped everywhere,
+banner-labeled in every generated report. It exercises steps 1–6, 8, and 10 above end to end
+against the 8-compound / 582-candidate dataset from `FEASIBILITY.md` §2.1, to prove the adapter →
+schema → calibrate → evaluate shape works on real spectra (the brief's §18 "not a toy fixture"
+bar) — it does not, and cannot, satisfy steps 7 or the compound-disjoint-split power needed for
+step 8's numbers to mean anything at scale. The committed `PREFLIGHT_REPORT.md` carries the
+explicit small-n disclaimer on every number — that file, not a re-run's local `report/REPORT.md`
+(gitignored, regenerated fresh each run), is the point-in-time record.
 
-Once that PR lands, `scripts/` will implement only the preflight — real data, `run_kind=preflight`
-stamped everywhere, banner-labeled in every generated report. It will exercise steps 1–6, 8, and
-10 above end to end against the 8-compound / 582-candidate dataset from `FEASIBILITY.md` §2.1, to
-prove the adapter → schema → calibrate → evaluate shape works on real spectra (the brief's §18
-"not a toy fixture" bar) — it does not, and cannot, satisfy steps 7 or the compound-disjoint-split
-power needed for step 8's numbers to mean anything at scale. The committed
-`PREFLIGHT_REPORT.md` will carry the explicit small-n disclaimer on every number.
+`scripts/selftest.py` is the one runnable check that doesn't need the real dataset: it builds a
+tiny synthetic `database.xlsx`/`experimental.html`/`predicted.html` triple with the same column
+layout as the real files and runs the full `export_candidates.py → validate_data.py →
+run_preflight.py → generate_report.py` chain against it, asserting on schema (lowercase
+`true`/`false`, non-trivial candidate pools), split disjointness, and report generation — pipeline
+*mechanics*, not scientific correctness on real data (that's what `PREFLIGHT_REPORT.md` is for).
+Run it before ever pointing the pipeline at the real dataset, or in any environment without
+network access:
 
-Reproduce steps the follow-up PR will add (not runnable against this PR alone):
+```bash
+cd benchmarks/dna_adductomics
+python3 scripts/selftest.py
+```
+
+Reproduce against the real dataset:
 
 ```bash
 cd benchmarks/dna_adductomics
 pip install -r requirements.txt
 
 python scripts/prepare_data.py --out-dir ./data          # downloads + checksums the CC-BY 4.0 dataset
-python scripts/export_candidates.py --data-dir ./data --out-dir ./data   # matchms scoring → masstrust CSV
+python scripts/export_candidates.py --data-dir ./data     # matchms scoring → masstrust CSV
 python scripts/validate_data.py --data-dir ./data        # schema + compound-disjoint leakage check
-python scripts/run_benchmark.py --data-dir ./data --out-dir ./report
+python scripts/run_preflight.py --data-dir ./data --out-dir ./report
 python scripts/generate_report.py --data-dir ./data --report-dir ./report
 ```
 

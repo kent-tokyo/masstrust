@@ -16,3 +16,8 @@ benchmarks/massspecgym/.venv*/
 # benchmarks/selective_msms_external generated artifacts (external-source data dump, per-run outputs)
 benchmarks/selective_msms_external/data/
 benchmarks/selective_msms_external/results/runs/
+
+# benchmarks/dna_adductomics generated artifacts (external-source data dump, reports)
+benchmarks/dna_adductomics/data/
+benchmarks/dna_adductomics/report/
+benchmarks/dna_adductomics/.venv*/
