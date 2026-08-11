@@ -18,6 +18,67 @@ use crate::error::MasstrustError;
 use crate::scoring::compute_confidence;
 use crate::types::{QueryRanking, ScoringMethod};
 
+/// Where a query's calibration/realized loss comes from.
+///
+/// See `docs/graded-loss-integration.md` for the full design rationale. This generalizes
+/// `certify-batch`'s loss from binary top-1 correctness to any `[0, 1]`-bounded loss a caller
+/// supplies — masstrust never computes chemistry itself; a [`Precomputed`] value is opaque
+/// data this module validates (finite, in `[0, 1]`) and carries through, never interpreted.
+///
+/// `values_by_query` is keyed by `query_id`, not attached to `Candidate` — the loss is a
+/// property of one query's top-1 annotation, and a caller (e.g. an unlabeled test batch, whose
+/// certificate does not need a loss for the test side at all — see [`certify_batch_with_loss`])
+/// may legitimately have no loss for a given query. Build it with
+/// [`io::read_query_loss_column`](crate::io::read_query_loss_column).
+///
+/// [`Precomputed`]: LossSource::Precomputed
+#[derive(Debug, Clone, Copy)]
+pub enum LossSource<'a> {
+    /// Today's behavior. The default — every existing caller of [`certify_batch`] and
+    /// [`resolve_realized_losses`] is unaffected by this type's introduction; both remain
+    /// exactly as they were, now implemented as this variant's compatibility wrapper.
+    BinaryCorrectness,
+    /// A precomputed `[0, 1]` loss, keyed by `query_id`. `label` is a caller-chosen name (e.g.
+    /// `"tanimoto_loss"`, `"scaffold_loss"`) carried verbatim into the certificate/report for
+    /// provenance — masstrust does not interpret it chemically.
+    Precomputed {
+        label: &'a str,
+        values_by_query: &'a std::collections::BTreeMap<String, f64>,
+    },
+}
+
+impl LossSource<'_> {
+    fn kind(&self) -> LossKind {
+        match self {
+            LossSource::BinaryCorrectness => LossKind::BinaryCorrectness,
+            LossSource::Precomputed { label, .. } => LossKind::Precomputed(label.to_string()),
+        }
+    }
+}
+
+/// Which loss a [`BatchCertification`] actually bounds — the typed form of
+/// [`LossSource`], carried in the result so it survives past the call that produced it (and can
+/// be compared against a *different* [`LossSource`] passed to [`resolve_realized_losses_with_loss`]
+/// later — see that function's mismatch check).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LossKind {
+    BinaryCorrectness,
+    /// The `label` a [`LossSource::Precomputed`] was constructed with.
+    Precomputed(String),
+}
+
+impl LossKind {
+    /// Human-readable provenance label, carried into the certificate/report verbatim so a
+    /// reader can never mistake a graded-loss certificate for an exact-match one, or vice
+    /// versa. Literally `"binary_correctness"` or `"precomputed: <label>"`.
+    pub fn provenance_label(&self) -> String {
+        match self {
+            LossKind::BinaryCorrectness => "binary_correctness".to_string(),
+            LossKind::Precomputed(label) => format!("precomputed: {label}"),
+        }
+    }
+}
+
 /// Which e-value construction backs the certificate.
 ///
 /// See `docs/risksieve-integration.md`'s "Why not `CalibrationMethod`" section: [`Coupled`]
@@ -101,6 +162,10 @@ pub struct BatchCertification {
     pub score_orientation_note: &'static str,
     /// See [`QUERY_ORDERING_POLICY`].
     pub query_ordering_policy: &'static str,
+    /// Which loss `calibration_losses` (and therefore this certificate) was built from. A
+    /// report must never present a `Precomputed` certificate as certifying exact-match risk
+    /// without checking this first. See [`LossKind::provenance_label`].
+    pub loss_kind: LossKind,
     /// Calibration-side scoreability accounting.
     pub calibration_counts: ScoreabilityCounts,
     /// Test-side scoreability accounting.
@@ -150,6 +215,54 @@ fn correctness_loss(is_correct: bool) -> ClosedUnitInterval {
     ClosedUnitInterval::new("loss", value).expect("0.0 and 1.0 are always valid")
 }
 
+/// Resolves `ranking`'s loss under `source`.
+///
+/// `on_missing_binary_label` is only ever invoked for [`LossSource::BinaryCorrectness`] with no
+/// `is_correct` label — it exists so this one function can serve both `certify_batch_with_loss`'s
+/// calibration loop (which raises [`MasstrustError::MissingCalibrationLabel`]) and
+/// [`resolve_realized_losses_with_loss`] (which raises [`MasstrustError::MissingRealizedLabel`])
+/// without either call site losing its own error semantics, the same pattern
+/// [`sorted_unique_by_query_id`]'s `on_duplicate` parameter already uses for the same reason.
+///
+/// [`LossSource::Precomputed`]'s own missing/out-of-range cases always raise
+/// [`MasstrustError::MissingLossColumn`]/[`MasstrustError::LossOutOfRange`] directly — never
+/// through `on_missing_binary_label` — since those carry the loss label, which a caller-scoped
+/// closure built for the binary case wouldn't have. A value already validated at read time by
+/// [`io::read_query_loss_column`](crate::io::read_query_loss_column) is re-checked here too
+/// (cheap, and correct regardless of how the caller actually built `values_by_query`).
+fn query_loss(
+    ranking: &QueryRanking,
+    source: LossSource,
+    on_missing_binary_label: impl FnOnce() -> MasstrustError,
+) -> Result<ClosedUnitInterval, MasstrustError> {
+    match source {
+        LossSource::BinaryCorrectness => {
+            let is_correct = top1_is_correct(ranking).ok_or_else(on_missing_binary_label)?;
+            Ok(correctness_loss(is_correct))
+        }
+        LossSource::Precomputed {
+            label,
+            values_by_query,
+        } => {
+            let value = values_by_query
+                .get(&ranking.query_id)
+                .copied()
+                .ok_or_else(|| MasstrustError::MissingLossColumn {
+                    query_id: ranking.query_id.clone(),
+                    column: label.to_string(),
+                })?;
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                return Err(MasstrustError::LossOutOfRange {
+                    query_id: ranking.query_id.clone(),
+                    column: label.to_string(),
+                    value,
+                });
+            }
+            Ok(ClosedUnitInterval::new("loss", value).expect("range checked immediately above"))
+        }
+    }
+}
+
 /// Sorts `rankings` by `query_id` ascending and rejects duplicates — the ordering
 /// [`QUERY_ORDERING_POLICY`] documents is produced *here*, not assumed from however the
 /// caller happened to pass its input. A duplicate `query_id` is a hard error: it would
@@ -170,8 +283,35 @@ fn sorted_unique_by_query_id(
     Ok(sorted)
 }
 
+/// Runs SCoRE-SDR batch certification against binary top-1 correctness
+/// (`certify_batch_with_loss` with [`LossSource::BinaryCorrectness`]) — kept as its own function,
+/// with this exact signature, for source compatibility: every caller written before graded loss
+/// existed keeps compiling and keeps exactly today's behavior unchanged.
+///
+/// # Errors
+///
+/// See [`certify_batch_with_loss`].
+pub fn certify_batch(
+    calibration: &[QueryRanking],
+    test: &[QueryRanking],
+    method: ScoringMethod,
+    alpha: f64,
+    gamma: f64,
+    construction: Construction,
+) -> Result<BatchCertification, MasstrustError> {
+    certify_batch_with_loss(
+        calibration,
+        test,
+        method,
+        LossSource::BinaryCorrectness,
+        alpha,
+        gamma,
+        construction,
+    )
+}
+
 /// Runs SCoRE-SDR batch certification (`risksieve::selective::sdr::certify` or
-/// `certify_independent`, per `construction`).
+/// `certify_independent`, per `construction`), against whichever loss `loss_source` selects.
 ///
 /// `calibration` and `test` are filtered to the *same* scoreability predicate
 /// (`compute_confidence` under `method` returning `Some`) before anything reaches
@@ -179,18 +319,29 @@ fn sorted_unique_by_query_id(
 /// queries" section for why filtering only the test side would silently violate SCoRE-SDR's
 /// joint-exchangeability requirement.
 ///
+/// **`test` never needs a loss.** Only `calibration` does — SCoRE-SDR's certificate is a
+/// property of the calibration losses and both sides' *scores*; the test side's role here is
+/// score-only. This is what makes a genuinely unlabeled/loss-free test batch a normal,
+/// first-class case: certify against it, and only ask for a loss on the (typically much
+/// smaller) set of *selected* queries later, if and when labels/precomputed losses for them
+/// become available — see [`resolve_realized_losses_with_loss`].
+///
 /// # Errors
 ///
-/// - A calibration query that is scoreable but has no `is_correct` label is a hard error
-///   ([`MasstrustError::MissingCalibrationLabel`]), never a silent exclusion.
+/// - A calibration query that is scoreable but has no loss under `loss_source` is a hard error
+///   — [`MasstrustError::MissingCalibrationLabel`] for [`LossSource::BinaryCorrectness`],
+///   [`MasstrustError::MissingLossColumn`] for [`LossSource::Precomputed`] — never a silent
+///   exclusion. A precomputed loss outside `[0, 1]` or non-finite is
+///   [`MasstrustError::LossOutOfRange`].
 /// - A non-finite confidence on either side is a hard error
 ///   ([`MasstrustError::NonFiniteConfidence`]) for the whole call, never a silent abstain.
 /// - Invalid `alpha`/`gamma` (outside the open interval `(0, 1)`) or any error `risksieve`
 ///   itself returns is propagated as [`MasstrustError::RiskSieve`], unedited.
-pub fn certify_batch(
+pub fn certify_batch_with_loss(
     calibration: &[QueryRanking],
     test: &[QueryRanking],
     method: ScoringMethod,
+    loss_source: LossSource,
     alpha: f64,
     gamma: f64,
     construction: Construction,
@@ -230,17 +381,19 @@ pub fn certify_batch(
                 value: confidence,
             });
         }
-        let Some(is_correct) = top1_is_correct(ranking) else {
-            return Err(MasstrustError::MissingCalibrationLabel {
+        let loss = query_loss(ranking, loss_source, || {
+            MasstrustError::MissingCalibrationLabel {
                 query_id: ranking.query_id.clone(),
                 method,
-            });
-        };
-        calibration_losses.push(correctness_loss(is_correct));
+            }
+        })?;
+        calibration_losses.push(loss);
         calibration_scores.push(-confidence);
     }
     let calibration_scoreable = calibration_losses.len();
 
+    // Test side is score-only -- no loss lookup here at all, on purpose (see doc comment
+    // above): an unlabeled/loss-free test batch is the normal case, not a degraded one.
     let test_total = test_sorted.len();
     let mut scoreable_test_queries = Vec::new();
     let mut excluded_test_queries = Vec::new();
@@ -294,6 +447,7 @@ pub fn certify_batch(
         scoring_method: method,
         score_orientation_note: SCORE_ORIENTATION_NOTE,
         query_ordering_policy: QUERY_ORDERING_POLICY,
+        loss_kind: loss_source.kind(),
         calibration_counts: ScoreabilityCounts {
             total: calibration_total,
             scoreable: calibration_scoreable,
@@ -308,26 +462,55 @@ pub fn certify_batch(
     })
 }
 
-/// Resolves the realized `is_correct` labels for `certification`'s selected queries, in
-/// preparation for [`risksieve::selective::sdr::realized_selective_risk`] — which this
-/// module deliberately does not re-implement, since its `f64`-with-no-`GuaranteeKind`
-/// return type is itself the library's way of ensuring a realized risk can never be
-/// mistaken for a second certificate.
-///
-/// `labeled` need not be the same slice passed to [`certify_batch`] as `test`, but must
-/// contain a labeled entry for every selected `query_id` (a fresh, independently labeled
-/// batch is the normal case: the certificate was computed against unlabeled test data, and
-/// labels only became available afterward).
+/// Resolves the realized binary-correctness losses for `certification`'s selected queries
+/// (`resolve_realized_losses_with_loss` with [`LossSource::BinaryCorrectness`]) — kept as its
+/// own function, with this exact signature, for source compatibility.
 ///
 /// # Errors
 ///
-/// A missing label for any selected query is a hard error, not a silent skip — this is a
-/// post-hoc descriptive statistic, not a certificate, but it is still never allowed to
-/// silently describe less than what it claims to.
+/// See [`resolve_realized_losses_with_loss`].
 pub fn resolve_realized_losses(
     certification: &BatchCertification,
     labeled: &[QueryRanking],
 ) -> Result<Vec<ClosedUnitInterval>, MasstrustError> {
+    resolve_realized_losses_with_loss(certification, labeled, LossSource::BinaryCorrectness)
+}
+
+/// Resolves the realized loss for `certification`'s selected queries, in preparation for
+/// [`risksieve::selective::sdr::realized_selective_risk`] — which this module deliberately does
+/// not re-implement, since its `f64`-with-no-`GuaranteeKind` return type is itself the library's
+/// way of ensuring a realized risk can never be mistaken for a second certificate.
+///
+/// `labeled` need not be the same slice passed to [`certify_batch_with_loss`] as `test`, but
+/// must contain a labeled entry for every selected `query_id` (a fresh, independently labeled
+/// batch is the normal case: the certificate was computed against an unlabeled/loss-free test
+/// batch, and labels only became available afterward — see `certify_batch_with_loss`'s doc
+/// comment on why the test side needs no loss at certification time). Only *selected* queries
+/// need a loss here — an unselected query missing one is not an error.
+///
+/// # Errors
+///
+/// - `loss_source` must be the *same kind* of loss `certification` was certified against
+///   (same [`LossKind`] — for [`LossSource::Precomputed`], the same `label`) —
+///   [`MasstrustError::LossSourceMismatch`] otherwise. Resolving realized risk under a
+///   different loss than what was certified would silently misrepresent what the certificate's
+///   guarantee is about.
+/// - A missing loss for any selected query is a hard error, not a silent skip — this is a
+///   post-hoc descriptive statistic, not a certificate, but it is still never allowed to
+///   silently describe less than what it claims to.
+pub fn resolve_realized_losses_with_loss(
+    certification: &BatchCertification,
+    labeled: &[QueryRanking],
+    loss_source: LossSource,
+) -> Result<Vec<ClosedUnitInterval>, MasstrustError> {
+    let requested_kind = loss_source.kind();
+    if requested_kind != certification.loss_kind {
+        return Err(MasstrustError::LossSourceMismatch {
+            certified: certification.loss_kind.provenance_label(),
+            requested: requested_kind.provenance_label(),
+        });
+    }
+
     let by_id: std::collections::HashMap<&str, &QueryRanking> =
         labeled.iter().map(|r| (r.query_id.as_str(), r)).collect();
 
@@ -341,11 +524,11 @@ pub fn resolve_realized_losses(
                     .ok_or_else(|| MasstrustError::MissingRealizedLabel {
                         query_id: query_id.to_string(),
                     })?;
-            let is_correct =
-                top1_is_correct(ranking).ok_or_else(|| MasstrustError::MissingRealizedLabel {
+            query_loss(ranking, loss_source, || {
+                MasstrustError::MissingRealizedLabel {
                     query_id: query_id.to_string(),
-                })?;
-            Ok(correctness_loss(is_correct))
+                }
+            })
         })
         .collect()
 }
@@ -979,5 +1162,248 @@ mod tests {
             via_adapter.certificate.parameter,
             direct_independent.parameter
         );
+    }
+
+    // --- LossSource::Precomputed ---
+
+    fn ranking_no_labels(query_id: &str, gap: f64) -> QueryRanking {
+        // No is_correct, no loss on either candidate -- a genuinely unlabeled query.
+        QueryRanking {
+            query_id: query_id.into(),
+            candidates: vec![
+                cand(query_id, "b", 2, 0.99 - gap, None),
+                cand(query_id, "a", 1, 0.99, None),
+            ],
+        }
+    }
+
+    #[test]
+    fn provenance_label_is_literal_binary_correctness_or_precomputed_label() {
+        assert_eq!(
+            LossKind::BinaryCorrectness.provenance_label(),
+            "binary_correctness"
+        );
+        assert_eq!(
+            LossKind::Precomputed("tanimoto_loss".to_string()).provenance_label(),
+            "precomputed: tanimoto_loss"
+        );
+    }
+
+    #[test]
+    fn batch_certification_records_binary_correctness_by_default() {
+        let calibration = extreme_batch("c", 20);
+        let test = extreme_batch("t", 4);
+        let result = certify_batch(
+            &calibration,
+            &test,
+            ScoringMethod::ScoreGap,
+            0.5,
+            0.3,
+            Construction::Coupled,
+        )
+        .unwrap();
+        assert_eq!(result.loss_kind, LossKind::BinaryCorrectness);
+    }
+
+    /// The central case this whole feature exists to support: a completely unlabeled test
+    /// batch (no is_correct, no loss column at all) still certifies successfully against a
+    /// precomputed calibration loss. If `certify_batch_with_loss` accidentally required a test
+    /// loss too, this would fail.
+    #[test]
+    fn precomputed_loss_certifies_against_a_completely_unlabeled_test_batch() {
+        let mut calib_losses = std::collections::BTreeMap::new();
+        for i in 0..20 {
+            let query_id = format!("c{i}");
+            // Alternate low/high loss so eBH has something to separate on, mirroring
+            // extreme_batch's correct/incorrect alternation.
+            calib_losses.insert(query_id, if i % 2 == 0 { 0.02 } else { 0.9 });
+        }
+        let calibration: Vec<QueryRanking> = (0..20)
+            .map(|i| {
+                let gap = if i % 2 == 0 { 0.8 } else { 0.01 };
+                ranking_no_labels(&format!("c{i}"), gap)
+            })
+            .collect();
+        // Test batch: no is_correct, no loss -- genuinely unlabeled.
+        let test: Vec<QueryRanking> = (0..10)
+            .map(|i| {
+                let gap = if i % 2 == 0 { 0.8 } else { 0.01 };
+                ranking_no_labels(&format!("t{i}"), gap)
+            })
+            .collect();
+
+        let loss_source = LossSource::Precomputed {
+            label: "tanimoto_loss",
+            values_by_query: &calib_losses,
+        };
+        let result = certify_batch_with_loss(
+            &calibration,
+            &test,
+            ScoringMethod::ScoreGap,
+            loss_source,
+            0.5,
+            0.1,
+            Construction::Coupled,
+        )
+        .unwrap();
+        assert_eq!(
+            result.loss_kind,
+            LossKind::Precomputed("tanimoto_loss".to_string())
+        );
+        assert_eq!(result.test_counts.scoreable, 10);
+    }
+
+    #[test]
+    fn missing_calibration_loss_under_precomputed_is_a_hard_error() {
+        let calib_losses: std::collections::BTreeMap<String, f64> =
+            (0..20).map(|i| (format!("c{i}"), 0.05)).collect(); // "c_unlabeled" deliberately absent below
+        let mut calibration: Vec<QueryRanking> = (0..20)
+            .map(|i| ranking_no_labels(&format!("c{i}"), 0.8))
+            .collect();
+        calibration.push(ranking_no_labels("c_unlabeled", 0.8));
+        let test: Vec<QueryRanking> = (0..4)
+            .map(|i| ranking_no_labels(&format!("t{i}"), 0.8))
+            .collect();
+
+        let loss_source = LossSource::Precomputed {
+            label: "tanimoto_loss",
+            values_by_query: &calib_losses,
+        };
+        let err = certify_batch_with_loss(
+            &calibration,
+            &test,
+            ScoringMethod::ScoreGap,
+            loss_source,
+            0.5,
+            0.3,
+            Construction::Coupled,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            MasstrustError::MissingLossColumn { ref query_id, ref column }
+                if query_id == "c_unlabeled" && column == "tanimoto_loss"
+        ));
+    }
+
+    #[test]
+    fn out_of_range_calibration_loss_under_precomputed_is_a_hard_error() {
+        let mut calib_losses: std::collections::BTreeMap<String, f64> =
+            (0..20).map(|i| (format!("c{i}"), 0.05)).collect();
+        calib_losses.insert("c0".to_string(), 1.5); // overwrite one with an invalid value
+        let calibration: Vec<QueryRanking> = (0..20)
+            .map(|i| ranking_no_labels(&format!("c{i}"), 0.8))
+            .collect();
+        let test: Vec<QueryRanking> = (0..4)
+            .map(|i| ranking_no_labels(&format!("t{i}"), 0.8))
+            .collect();
+
+        let loss_source = LossSource::Precomputed {
+            label: "tanimoto_loss",
+            values_by_query: &calib_losses,
+        };
+        let err = certify_batch_with_loss(
+            &calibration,
+            &test,
+            ScoringMethod::ScoreGap,
+            loss_source,
+            0.5,
+            0.3,
+            Construction::Coupled,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            MasstrustError::LossOutOfRange { ref query_id, value, .. }
+                if query_id == "c0" && value == 1.5
+        ));
+    }
+
+    #[test]
+    fn resolve_realized_losses_with_loss_computes_graded_risk_when_test_labels_present() {
+        let calib_losses: std::collections::BTreeMap<String, f64> =
+            (0..40).map(|i| (format!("c{i}"), 0.02)).collect();
+        let calibration: Vec<QueryRanking> = (0..40)
+            .map(|i| ranking_no_labels(&format!("c{i}"), 0.8))
+            .collect();
+        let test: Vec<QueryRanking> = (0..10)
+            .map(|i| ranking_no_labels(&format!("t{i}"), 0.8))
+            .collect();
+
+        let calib_source = LossSource::Precomputed {
+            label: "tanimoto_loss",
+            values_by_query: &calib_losses,
+        };
+        let result = certify_batch_with_loss(
+            &calibration,
+            &test,
+            ScoringMethod::ScoreGap,
+            calib_source,
+            0.5,
+            0.1,
+            Construction::Coupled,
+        )
+        .unwrap();
+        assert!(!result.certificate.parameter.is_empty());
+
+        // Realized loss becomes available only now, post-hoc, for the (typically much
+        // smaller) set of selected test queries.
+        let test_losses: std::collections::BTreeMap<String, f64> =
+            (0..10).map(|i| (format!("t{i}"), 0.1)).collect();
+        let realized_source = LossSource::Precomputed {
+            label: "tanimoto_loss",
+            values_by_query: &test_losses,
+        };
+        let losses = resolve_realized_losses_with_loss(&result, &test, realized_source).unwrap();
+        assert_eq!(losses.len(), result.certificate.parameter.len());
+        assert!(losses.iter().all(|l| (l.get() - 0.1).abs() < 1e-12));
+    }
+
+    #[test]
+    fn realized_loss_source_must_match_what_was_certified() {
+        let calib_losses: std::collections::BTreeMap<String, f64> =
+            (0..40).map(|i| (format!("c{i}"), 0.02)).collect();
+        let calibration: Vec<QueryRanking> = (0..40)
+            .map(|i| ranking_no_labels(&format!("c{i}"), 0.8))
+            .collect();
+        let test: Vec<QueryRanking> = (0..10)
+            .map(|i| ranking_no_labels(&format!("t{i}"), 0.8))
+            .collect();
+
+        let calib_source = LossSource::Precomputed {
+            label: "tanimoto_loss",
+            values_by_query: &calib_losses,
+        };
+        let result = certify_batch_with_loss(
+            &calibration,
+            &test,
+            ScoringMethod::ScoreGap,
+            calib_source,
+            0.5,
+            0.1,
+            Construction::Coupled,
+        )
+        .unwrap();
+        assert!(!result.certificate.parameter.is_empty());
+
+        // Certified against "tanimoto_loss"; try to resolve realized risk against
+        // BinaryCorrectness instead -- must be rejected, not silently computed.
+        let err = resolve_realized_losses_with_loss(&result, &test, LossSource::BinaryCorrectness)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            MasstrustError::LossSourceMismatch { ref certified, ref requested }
+                if certified == "precomputed: tanimoto_loss" && requested == "binary_correctness"
+        ));
+
+        // Also rejected against a *different* precomputed label.
+        let other_losses: std::collections::BTreeMap<String, f64> =
+            (0..10).map(|i| (format!("t{i}"), 0.1)).collect();
+        let other_source = LossSource::Precomputed {
+            label: "scaffold_loss",
+            values_by_query: &other_losses,
+        };
+        let err = resolve_realized_losses_with_loss(&result, &test, other_source).unwrap_err();
+        assert!(matches!(err, MasstrustError::LossSourceMismatch { .. }));
     }
 }

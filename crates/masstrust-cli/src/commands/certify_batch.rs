@@ -7,9 +7,10 @@ use std::path::PathBuf;
 use anyhow::bail;
 use clap::Args;
 use masstrust_core::risksieve_backend::{
-    self, BatchCertification, Construction, ExcludedQuery, UNSCOREABLE_POLICY_NOTE,
+    self, BatchCertification, Construction, ExcludedQuery, LossKind, LossSource,
+    UNSCOREABLE_POLICY_NOTE,
 };
-use masstrust_core::{ScoringMethod, io};
+use masstrust_core::{MasstrustError, ScoringMethod, io};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -44,6 +45,16 @@ pub struct CertifyBatchArgs {
     /// e-value construction: "coupled" (paper-exact, default) or "independent"
     #[arg(long, default_value = "coupled")]
     pub construction: String,
+    /// Optional column of precomputed `[0, 1]` loss values (e.g. Tanimoto dissimilarity,
+    /// scaffold mismatch) to certify against instead of binary top-1 correctness. Required on
+    /// every scoreable calibration query (hard error otherwise) -- but genuinely optional on
+    /// `--test`: an unlabeled test set (no such column at all) still certifies successfully,
+    /// it just can't produce a post-hoc realized-risk number. If the column *is* present in
+    /// `--test`, every selected query's value in it is strictly validated. Omit for today's
+    /// default behavior (exact-match correctness from `is_correct`). See
+    /// docs/graded-loss-integration.md.
+    #[arg(long)]
+    pub loss_column: Option<String>,
     /// Output accepted (selected) queries CSV
     #[arg(long)]
     pub accepted: PathBuf,
@@ -70,6 +81,15 @@ fn construction_str(c: Construction) -> &'static str {
     match c {
         Construction::Coupled => "coupled",
         Construction::Independent => "independent",
+    }
+}
+
+const LOSS_DOMAIN: &str = "[0, 1]";
+
+fn loss_kind_str_and_label(kind: &LossKind) -> (&'static str, Option<String>) {
+    match kind {
+        LossKind::BinaryCorrectness => ("binary_correctness", None),
+        LossKind::Precomputed(label) => ("precomputed", Some(label.clone())),
     }
 }
 
@@ -150,6 +170,22 @@ struct CertificateEnvelope<'a> {
     scoring_method: String,
     score_orientation: &'a str,
     query_ordering_policy: &'a str,
+    /// `"binary_correctness"` or `"precomputed"` — never presented as an exact-match-risk
+    /// certificate when it's actually `"precomputed"`, or vice versa.
+    loss_kind: &'static str,
+    /// The loss's caller-chosen label (e.g. `"tanimoto_loss"`) when `loss_kind` is
+    /// `"precomputed"`; `null` for `"binary_correctness"`.
+    loss_label: Option<String>,
+    /// The `--loss-column` CLI flag's value, if given -- present alongside `loss_label` since
+    /// they're the same value in this CLI's usage, but this field documents specifically what
+    /// was passed on the command line (`loss_label` is the more general, non-CLI-specific
+    /// concept a future library caller could also populate).
+    loss_column: Option<String>,
+    /// The domain every certified/realized loss value is validated against. Constant today;
+    /// kept as an explicit field rather than assumed, matching `score_orientation`/
+    /// `query_ordering_policy`'s own "never make a reader re-derive or silently assume it"
+    /// convention.
+    loss_domain: &'static str,
     /// Plain-language statement of the population this certificate's guarantee actually
     /// applies to (queries scoreable under `scoring_method`) — **not** all submitted queries.
     certified_population: String,
@@ -190,25 +226,70 @@ pub fn run(args: CertifyBatchArgs) -> anyhow::Result<()> {
     let test_candidates = io::read_candidates(&args.test)?;
     let test_rankings = io::group_by_query(test_candidates);
 
-    let certification = risksieve_backend::certify_batch(
+    // Calibration loss is required whenever --loss-column is given (hard error if the column
+    // is absent or any scoreable calibration query's value is malformed/out-of-range -- see
+    // io::read_query_loss_column). Test loss is genuinely optional: certify_batch_with_loss
+    // never needs it for the test side at all, so an unlabeled --test is not a degraded case.
+    let calibration_loss_map = args
+        .loss_column
+        .as_deref()
+        .map(|column| io::read_query_loss_column(&args.calibration, column))
+        .transpose()?;
+    let loss_source = match (&args.loss_column, &calibration_loss_map) {
+        (Some(column), Some(values)) => LossSource::Precomputed {
+            label: column,
+            values_by_query: values,
+        },
+        _ => LossSource::BinaryCorrectness,
+    };
+
+    let certification = risksieve_backend::certify_batch_with_loss(
         &calibration_rankings,
         &test_rankings,
         scoring_method,
+        loss_source,
         args.alpha,
         args.gamma,
         construction,
     )?;
 
-    // Realized risk only if the test data actually carries labels — a post-hoc descriptive
-    // statistic, never presented as validating the certificate. See docs/risksieve-integration.md.
-    let has_test_labels = test_rankings.iter().any(|r| {
-        r.candidates
-            .iter()
-            .min_by_key(|c| c.rank)
-            .is_some_and(|c| c.is_correct.is_some())
-    });
+    // Realized risk: a post-hoc descriptive statistic, never presented as validating the
+    // certificate. See docs/risksieve-integration.md. Computed only if the test data actually
+    // carries a loss under the same source the certificate itself was built from.
+    let test_loss_map = match &args.loss_column {
+        Some(column) => match io::read_query_loss_column(&args.test, column) {
+            Ok(map) => Some(map),
+            // The column doesn't exist in --test at all: a genuinely unlabeled test set, not
+            // an error -- realized risk simply isn't computed. Any other error (malformed or
+            // out-of-range value in a column that *does* exist) is a real data problem and
+            // must not be silently swallowed the same way.
+            Err(MasstrustError::MissingColumn(_)) => None,
+            Err(e) => return Err(e.into()),
+        },
+        None => None,
+    };
+    let has_test_labels = match &args.loss_column {
+        Some(_) => test_loss_map.is_some(),
+        None => test_rankings.iter().any(|r| {
+            r.candidates
+                .iter()
+                .min_by_key(|c| c.rank)
+                .is_some_and(|c| c.is_correct.is_some())
+        }),
+    };
     let realized_risk = if has_test_labels && !certification.certificate.parameter.is_empty() {
-        let losses = risksieve_backend::resolve_realized_losses(&certification, &test_rankings)?;
+        let realized_source = match (&args.loss_column, &test_loss_map) {
+            (Some(column), Some(values)) => LossSource::Precomputed {
+                label: column,
+                values_by_query: values,
+            },
+            _ => LossSource::BinaryCorrectness,
+        };
+        let losses = risksieve_backend::resolve_realized_losses_with_loss(
+            &certification,
+            &test_rankings,
+            realized_source,
+        )?;
         Some(risksieve::selective::sdr::realized_selective_risk(&losses))
     } else if has_test_labels {
         // Empty selection: risksieve's own convention is 0.0, not NaN — reuse it rather than
@@ -301,6 +382,7 @@ fn write_outputs(
     io::write_csv(&accepted_rows, &args.accepted)?;
     io::write_csv(&abstained_rows, &args.abstained)?;
 
+    let (loss_kind, loss_label) = loss_kind_str_and_label(&certification.loss_kind);
     let selected_query_ids = certification.selected_query_ids();
     let envelope = CertificateEnvelope {
         schema_version: "1.0",
@@ -312,6 +394,10 @@ fn write_outputs(
         scoring_method: method_name.clone(),
         score_orientation: certification.score_orientation_note,
         query_ordering_policy: certification.query_ordering_policy,
+        loss_kind,
+        loss_label,
+        loss_column: args.loss_column.clone(),
+        loss_domain: LOSS_DOMAIN,
         certified_population: certification.certified_population(),
         unscoreable_policy: UNSCOREABLE_POLICY_NOTE,
         alpha: args.alpha,
@@ -420,6 +506,10 @@ fn render_report(
         "- query ordering policy: {}\n",
         certification.query_ordering_policy
     ));
+    s.push_str(&format!(
+        "- loss: {} (domain {LOSS_DOMAIN}) — this certificate bounds this loss, not necessarily exact-match risk\n",
+        certification.loss_kind.provenance_label()
+    ));
     s.push_str(&format!("- assumptions: {:?}\n\n", cert.assumptions));
 
     if cert.parameter.is_empty() {
@@ -469,7 +559,15 @@ fn render_report(
             s.push_str("It does not validate the certificate above, and a value at or below alpha here is not \"certificate verification succeeded\" — nor does a value above alpha, on its own, mean the theorem was violated (the guarantee is about an expectation over repeated draws, not this single batch).\n\n");
         }
         None => {
-            s.push_str("Not computed: the test data did not carry `is_correct` labels.\n\n");
+            let reason = match &certification.loss_kind {
+                LossKind::BinaryCorrectness => "did not carry `is_correct` labels".to_string(),
+                LossKind::Precomputed(label) => {
+                    format!(
+                        "did not carry a '{label}' column (or it had no value for any selected query)"
+                    )
+                }
+            };
+            s.push_str(&format!("Not computed: the test data {reason}.\n\n"));
         }
     }
 
@@ -529,6 +627,10 @@ fn print_summary(
     eprintln!(
         "  score orientation:    {}",
         certification.score_orientation_note
+    );
+    eprintln!(
+        "  loss:                 {}",
+        certification.loss_kind.provenance_label()
     );
     match realized_risk {
         Some(risk) => eprintln!("  realized risk (post-hoc, descriptive only): {risk}"),

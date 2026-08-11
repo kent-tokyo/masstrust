@@ -328,6 +328,240 @@ fn unscoreable_test_query_is_reported_as_abstained_not_dropped() {
     assert!(abstained.contains("unscoreable"));
 }
 
+// --- graded loss (--loss-column) ---
+
+#[test]
+fn loss_column_omitted_defaults_to_binary_correctness() {
+    let dir = tempfile::tempdir().unwrap();
+    let calib = dir.path().join("calib.csv");
+    let test = dir.path().join("test.csv");
+    write_extreme_csv(&calib, "c", 40);
+    write_extreme_csv(&test, "t", 10);
+
+    let out = Outputs::new();
+    let output = run_certify_batch(&calib, &test, &out, &["--alpha", "0.5", "--gamma", "0.1"]);
+    assert!(output.status.success());
+
+    let cert: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path("certificate.json")).unwrap())
+            .unwrap();
+    assert_eq!(cert["loss_kind"], "binary_correctness");
+    assert_eq!(cert["loss_label"], serde_json::Value::Null);
+}
+
+fn write_graded_loss_csv(path: &std::path::Path, prefix: &str, n: usize, loss: f64) {
+    let mut f = std::fs::File::create(path).unwrap();
+    writeln!(f, "query_id,candidate_id,rank,score,tanimoto_loss").unwrap();
+    for i in 0..n {
+        writeln!(f, "{prefix}{i},{prefix}{i}a,1,0.99,{loss}").unwrap();
+        writeln!(f, "{prefix}{i},{prefix}{i}b,2,0.19,").unwrap();
+    }
+}
+
+/// The central case: certify against a precomputed calibration loss while `--test` is
+/// completely unlabeled (no `tanimoto_loss` column at all, no `is_correct` either). Must
+/// succeed and simply not compute a realized risk -- not fail outright.
+#[test]
+fn loss_column_certifies_against_a_completely_unlabeled_test_batch() {
+    let dir = tempfile::tempdir().unwrap();
+    let calib = dir.path().join("calib.csv");
+    let test = dir.path().join("test.csv");
+    write_graded_loss_csv(&calib, "c", 40, 0.05);
+    // Genuinely unlabeled: no tanimoto_loss column, no is_correct column.
+    write_extreme_csv_no_labels(&test, "t", 10);
+
+    let out = Outputs::new();
+    let output = run_certify_batch(
+        &calib,
+        &test,
+        &out,
+        &[
+            "--alpha",
+            "0.5",
+            "--gamma",
+            "0.1",
+            "--loss-column",
+            "tanimoto_loss",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let cert: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path("certificate.json")).unwrap())
+            .unwrap();
+    assert_eq!(cert["loss_kind"], "precomputed");
+    assert_eq!(cert["loss_label"], "tanimoto_loss");
+    assert_eq!(cert["loss_column"], "tanimoto_loss");
+    assert_eq!(cert["loss_domain"], "[0, 1]");
+    // No loss anywhere in --test -- realized risk must be "not computed", not an error.
+    assert_eq!(cert["realized_selective_risk"], serde_json::Value::Null);
+
+    let report = std::fs::read_to_string(out.path("report.md")).unwrap();
+    assert!(report.contains("Not computed"));
+}
+
+fn write_extreme_csv_no_labels(path: &std::path::Path, prefix: &str, n: usize) {
+    let mut f = std::fs::File::create(path).unwrap();
+    writeln!(f, "query_id,candidate_id,rank,score").unwrap();
+    for i in 0..n {
+        let gap: f64 = if i % 2 == 0 { 0.8 } else { 0.01 };
+        writeln!(f, "{prefix}{i},{prefix}{i}a,1,0.99").unwrap();
+        writeln!(f, "{prefix}{i},{prefix}{i}b,2,{:.3}", 0.99 - gap).unwrap();
+    }
+}
+
+/// When `--test` *does* carry the loss column, realized risk is computed from it -- the
+/// complementary case to the fully-unlabeled test above.
+#[test]
+fn loss_column_computes_realized_risk_when_test_carries_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let calib = dir.path().join("calib.csv");
+    let test = dir.path().join("test.csv");
+    write_graded_loss_csv(&calib, "c", 40, 0.02);
+    write_graded_loss_csv(&test, "t", 10, 0.1);
+
+    let out = Outputs::new();
+    let output = run_certify_batch(
+        &calib,
+        &test,
+        &out,
+        &[
+            "--alpha",
+            "0.5",
+            "--gamma",
+            "0.1",
+            "--loss-column",
+            "tanimoto_loss",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let cert: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.path("certificate.json")).unwrap())
+            .unwrap();
+    if cert["certificate"]["parameter"]
+        .as_array()
+        .unwrap()
+        .is_empty()
+    {
+        // Zero selection is a valid certificate; realized risk is risksieve's own 0.0
+        // convention for an empty selection, not "not computed".
+        assert_eq!(cert["realized_selective_risk"], 0.0);
+    } else {
+        let risk = cert["realized_selective_risk"].as_f64().unwrap();
+        assert!(
+            (risk - 0.1).abs() < 1e-9,
+            "expected realized risk ~0.1, got {risk}"
+        );
+    }
+}
+
+#[test]
+fn loss_column_missing_calibration_value_is_a_hard_error_not_a_silent_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let calib = dir.path().join("calib.csv");
+    let test = dir.path().join("test.csv");
+    write_graded_loss_csv(&calib, "c", 40, 0.1);
+    write_extreme_csv_no_labels(&test, "t", 10);
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&calib)
+            .unwrap();
+        writeln!(f, "missing0,missing0a,1,0.99,").unwrap();
+        writeln!(f, "missing0,missing0b,2,0.19,").unwrap();
+    }
+
+    let out = Outputs::new();
+    let output = run_certify_batch(
+        &calib,
+        &test,
+        &out,
+        &[
+            "--alpha",
+            "0.5",
+            "--gamma",
+            "0.1",
+            "--loss-column",
+            "tanimoto_loss",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("tanimoto_loss") && stderr.contains("missing0"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn loss_column_out_of_range_calibration_value_is_a_hard_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let calib = dir.path().join("calib.csv");
+    let test = dir.path().join("test.csv");
+    write_graded_loss_csv(&calib, "c", 40, 1.5); // out of [0,1]
+    write_extreme_csv_no_labels(&test, "t", 10);
+
+    let out = Outputs::new();
+    let output = run_certify_batch(
+        &calib,
+        &test,
+        &out,
+        &[
+            "--alpha",
+            "0.5",
+            "--gamma",
+            "0.1",
+            "--loss-column",
+            "tanimoto_loss",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("1.5"), "stderr: {stderr}");
+}
+
+#[test]
+fn loss_column_malformed_calibration_value_is_a_hard_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let calib = dir.path().join("calib.csv");
+    let test = dir.path().join("test.csv");
+    let mut f = std::fs::File::create(&calib).unwrap();
+    writeln!(f, "query_id,candidate_id,rank,score,tanimoto_loss").unwrap();
+    for i in 0..40 {
+        writeln!(f, "c{i},c{i}a,1,0.99,not_a_number").unwrap();
+        writeln!(f, "c{i},c{i}b,2,0.19,").unwrap();
+    }
+    drop(f);
+    write_extreme_csv_no_labels(&test, "t", 10);
+
+    let out = Outputs::new();
+    let output = run_certify_batch(
+        &calib,
+        &test,
+        &out,
+        &[
+            "--alpha",
+            "0.5",
+            "--gamma",
+            "0.1",
+            "--loss-column",
+            "tanimoto_loss",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not_a_number"), "stderr: {stderr}");
+}
+
 // Note: a CLI-level "duplicate query_id" test was considered and dropped. `io::group_by_query`
 // (which every CLI command routes through) groups CSV rows by query_id into one QueryRanking
 // per unique id -- two CSV rows sharing a query_id are just two candidates of the same query,
