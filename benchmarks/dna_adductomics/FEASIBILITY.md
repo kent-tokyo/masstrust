@@ -244,9 +244,11 @@ DNA-adductomics data.
 
 (The one integrity check worth recording here: `is_correct` is assigned by exact InChIKey match,
 which would understate accuracy if a "wrong" top-1 pick were actually a stereoisomer/duplicate
-entry of the true compound. Checked directly for all 4 wrong top-1 picks in the preflight run —
-every one has a different 14-character 2D-skeleton block from the true compound, so this is not a
-labeling artifact. See `report/REPORT.md`'s "Label-conflation check".)
+entry of the true compound. Checked directly for all 4 wrong top-1 picks in the local preflight
+run — every one has a different 14-character 2D-skeleton block from the true compound, so this is
+not a labeling artifact. This check, and the full preflight run it comes from, will be committed
+as `PREFLIGHT_REPORT.md`'s "Label-conflation check" section in the follow-up PR described in
+`README.md` — not part of this PR.)
 
 What the dataset *is* real enough for: one explicitly-labeled **pipeline-verification preflight**
 — real spectra, a real external similarity scorer, real masstrust CLI calls, run once end-to-end

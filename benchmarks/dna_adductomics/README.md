@@ -87,15 +87,25 @@ selective-annotation benchmark" (§19's gate is not met — see `FEASIBILITY.md`
     (`preflight`/`benchmark`) — `generate_report.py` must refuse to present `preflight` output as
     a benchmark result, exactly like `benchmarks/massspecgym/generate_report.py` already does.
 
-## What actually runs today: the preflight
+## What the preflight covers (planned — follow-up PR, not part of this documentation PR)
 
-`scripts/` implements only the preflight — real data, `run_kind=preflight` stamped everywhere,
-banner-labeled in every generated report. It exercises steps 1–6, 8, and 10 above end to end
-against the 8-compound / 582-candidate dataset from `FEASIBILITY.md` §2.1, to prove the adapter →
-schema → calibrate → evaluate shape works on real spectra (the brief's §18 "not a toy fixture"
-bar) — it does not, and cannot, satisfy steps 7 or the compound-disjoint-split power needed for
-step 8's numbers to mean anything at scale. See `scripts/README` output banners and
-`REPORT.md` (generated, not committed) for the explicit small-n disclaimer on every number.
+**This PR is documentation only: no `scripts/`, no `requirements.txt`, no downloaded data, no
+generated report exist here or on `main` yet.** A local exploratory run of the preflight
+described below has been completed and established real end-to-end compatibility (see
+`FEASIBILITY.md` §2.4) — that is preliminary, local evidence informing this design, not something
+committed to this repository. The reproducible adapter scripts and an explicitly-labeled
+`PREFLIGHT_REPORT.md` are planned for a separate follow-up PR
+(`test: add DNA-adductomics external-data preflight`).
+
+Once that PR lands, `scripts/` will implement only the preflight — real data, `run_kind=preflight`
+stamped everywhere, banner-labeled in every generated report. It will exercise steps 1–6, 8, and
+10 above end to end against the 8-compound / 582-candidate dataset from `FEASIBILITY.md` §2.1, to
+prove the adapter → schema → calibrate → evaluate shape works on real spectra (the brief's §18
+"not a toy fixture" bar) — it does not, and cannot, satisfy steps 7 or the compound-disjoint-split
+power needed for step 8's numbers to mean anything at scale. The committed
+`PREFLIGHT_REPORT.md` will carry the explicit small-n disclaimer on every number.
+
+Reproduce steps the follow-up PR will add (not runnable against this PR alone):
 
 ```bash
 cd benchmarks/dna_adductomics

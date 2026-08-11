@@ -3,20 +3,29 @@
 Status snapshot as of this commit. See each benchmark's own `README.md`/`FEASIBILITY.md` for full
 detail.
 
-## Shipped
+## Released (crates.io + PyPI: `masstrust-core`, `masstrust-cli`, `masstrust-py`)
 
-- **v0.1.0–v0.3.0**: core selective-prediction engine — confidence scoring (max-prob, score-gap,
-  margin, entropy, score-ratio, topk-gap, effective-k, candidate-count), risk-coverage curves,
-  AURC/E-AURC with bootstrap CI, empirical/binomial/experimental-CRC calibration, grouped
-  calibration, drift detection, leakage guard (`validate-split`), policy export/apply/batch, CLI +
-  Python bindings, crates.io + PyPI releases.
-- **v0.4.0 (core additions)**: `masstrust evaluate` (fixed-policy held-out evaluation, no
-  recalibration), Coverage@Risk CI / Wilson bound reporting.
-- **risksieve integration** (PR #1): feature-gated `risksieve`-backed `certify-batch` —
-  theorem-backed SCoRE-SDR batch selective-deployment certification, independent of the
-  reusable-threshold `calibrate`/`apply` flow. See `docs/risksieve-integration.md`. (Note: this
+Verified directly against `Cargo.toml`'s `workspace.package.version`, `git tag`, `gh release
+list`, and the crates.io/PyPI APIs — the only two published versions are:
+
+- **v0.1.0** (2025-06-27): initial CLI + library — confidence scoring (max-prob, score-gap,
+  margin, entropy), risk-coverage curves, AURC/E-AURC, empirical/binomial/experimental-CRC
+  calibration, grouped calibration, policy export/apply/batch, Python bindings.
+- **v0.2.0** (2026-08-07/08, including two follow-up packaging fixes): everything currently on
+  `main`'s core crates — additional scoring methods (score-ratio, topk-gap, effective-k,
+  candidate-count), `compare`/`drift`/`validate-split`/`evaluate` CLI commands, bootstrap CI on
+  `curve`/`evaluate`, and the feature-gated `risksieve`-backed `certify-batch` (theorem-backed
+  SCoRE-SDR batch selective-deployment certification, independent of the reusable-threshold
+  `calibrate`/`apply` flow — see `docs/risksieve-integration.md`). (Note: `risksieve` integration
   was previously tracked in project memory as "blocked pending a crates.io release" — that was
-  stale; it shipped.)
+  stale; it shipped in v0.2.0.) `Cargo.toml`'s workspace version is `0.2.0`; there is no
+  released, tagged, or published v0.3.0/v0.4.0 — those were internal working labels in local
+  task-tracking notes, not separate releases, and are not used here.
+
+There is currently no unreleased core-crate work on `main` beyond v0.2.0.
+
+## On `main` (research / benchmark harnesses — not published packages, not version-numbered)
+
 - **`benchmarks/massspecgym/`**: real-data harness against the official MassSpecGym v1.5
   retrieval benchmark. Preflight (small-batch, pipeline-verification) run completed successfully,
   5 real bugs found and fixed along the way. **Official seed-0 50-epoch run is blocked**: on this
@@ -32,14 +41,16 @@ detail.
   v1 candidate-pool artifact was confirmed not publicly retrievable; scope was narrowed and
   named accordingly). Complete, with a documented assumption-unverified caveat on whole-batch
   exchangeability.
-- **`benchmarks/dna_adductomics/`** (this round): Phase A literature/data reconnaissance for
-  cancer-relevant DNA-adductomics MS/MS selective-annotation, with colibactin as the requested
-  first killer use case. **Both the colibactin-specific benchmark and a general-DNA-adductomics
-  benchmark are NO-GO** against this project's own pre-registered minimum-n floor — see
-  `benchmarks/dna_adductomics/FEASIBILITY.md`. A real-data **pipeline-verification preflight**
-  (not a benchmark) was built and runs end to end: real reference-standard MS/MS spectra, real
-  matchms external scoring, real masstrust `calibrate`/`evaluate`/`compare` output, all
-  `run_kind=preflight`-stamped. See that directory's `README.md` and `report/REPORT.md`.
+- **`benchmarks/dna_adductomics/`** (this PR — docs only): Phase A literature/data
+  reconnaissance for cancer-relevant DNA-adductomics MS/MS selective-annotation, with colibactin
+  as the requested first killer use case. **Both the colibactin-specific benchmark and a
+  general-DNA-adductomics benchmark are NO-GO** against this project's own pre-registered
+  minimum-n floor — see `benchmarks/dna_adductomics/FEASIBILITY.md`. Separately, a local
+  exploratory n=8 preflight run established end-to-end adapter/schema/calibration compatibility
+  against real third-party data; reproducibility scripts and the explicitly-non-benchmark
+  preflight report are planned for a follow-up PR and are **not** part of this documentation PR
+  or currently on `main` — nothing here should be read as those scripts/report already existing
+  in the repository.
 
 ## In progress / blocked
 
