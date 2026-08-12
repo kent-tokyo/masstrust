@@ -135,7 +135,7 @@ $ masstrust calibrate examples/massspecgym_candidates.csv \
 $ masstrust apply examples/candidates.csv --policy policy.json \
     --out trusted.csv --abstained abstained.csv
 
-受理: 1  棄権: 1
+受理: 1  棄権: 1  （trusted.csv と abstained.csv を書き込み）
 ```
 
 **SVG プロット**（`--features plot` が必要）：

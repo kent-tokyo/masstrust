@@ -135,7 +135,7 @@ Calibration result (ScoreGap, empirical):
 $ masstrust apply examples/candidates.csv --policy policy.json \
     --out trusted.csv --abstained abstained.csv
 
-Accepted: 1  Abstained: 1
+Accepted: 1  Abstained: 1  (wrote trusted.csv and abstained.csv)
 ```
 
 **SVG plots** (requires `--features plot`):
