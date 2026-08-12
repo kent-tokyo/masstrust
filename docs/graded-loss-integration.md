@@ -195,8 +195,6 @@ that was never suited to it.
 - ~~Exact `MasstrustError` variant names/messages for missing-column and out-of-range cases.~~
   Resolved: `MissingLossColumn`, `LossOutOfRange`, `InvalidLossValue` (malformed, distinct from
   missing), `LossSourceMismatch` (added beyond this memo's original scope — see below).
-- Legacy `calibrate`/`evaluate` graded-loss support is still not started (unchanged from above).
-- A live, in-process cheminformatics backend is still not designed (unchanged from above).
 
 ## Implementation deviations from this memo (found during code review, PR #9)
 

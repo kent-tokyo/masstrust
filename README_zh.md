@@ -243,6 +243,77 @@ masstrust calibrate labeled.csv --score score-gap --error-rate 0.05 --method crc
 
 ---
 
+## 批量选择性部署认证（`risksieve`，可选）
+
+`masstrust certify-batch` 是一个 **feature-gated**（`--features risksieve`）的独立工作流，
+构建于 [`risksieve`](https://crates.io/crates/risksieve) crate 的 SCoRE-SDR 控制器之上
+（Bai and Jin, 2026, arXiv:2603.24704）。默认构建中完全不会暴露该命令。
+
+**这不是可复用的阈值策略。** 与 `calibrate`/`apply` 不同，每次运行它都会针对特定的
+校准集 + 测试批次这一对数据重新计算一次选择结果 —— 默认 construction 的 e-value 依赖于
+整个测试批次的组成，因此同一份校准数据在不同的测试批次上可能会选出不同的子集。关于为什么
+这是一个独立命令而不是新的 `CalibrationMethod`，以及 `GuaranteeKind::SelectiveDeploymentRisk`
+具体主张与不主张什么，请参见
+[`docs/risksieve-integration.md`](docs/risksieve-integration.md)。
+
+```bash
+masstrust certify-batch \
+  --calibration val.csv \
+  --test test.csv \
+  --score score-gap \
+  --alpha 0.05 \
+  --gamma 0.05 \
+  --construction coupled \
+  --accepted accepted.csv \
+  --abstained abstained.csv \
+  --certificate certificate.json \
+  --report report.md
+```
+
+- 风险保证依赖于明确声明的前提条件（校准集与*整个*测试批次的可交换性、损失落在 `[0, 1]`
+  区间内等）—— `certificate.json` 和 `report.md` 都会完整记录这些前提条件；在信任任何数字之前
+  请先阅读它们。
+- **选中数量为零是正常且有效的认证结果**，不是错误 —— SCoRE-SDR 的界在空选择集合上也平凡成立。
+- 如果 `test.csv` 恰好带有 `is_correct` 标签，报告中还会打印**实现选择性风险
+  (realized selective risk)** —— 这是根据这一批次的实际结果计算出的事后描述性统计量，与上方
+  由定理保证的认证结果明确区分开，且从不被描述为对该认证结果的验证（或反驳）。
+
+### 分级化学损失（`--loss-column`）
+
+默认情况下，被认证/实现的损失是二元的 top-1 正确率（`is_correct`：正确为 `0.0`，否则为
+`1.0`）。指定 `--loss-column <name>` 后，可以改为针对任意落在 `[0, 1]` 区间内的预计算损失
+进行认证 —— 例如 Tanimoto 不相似度或骨架不匹配，这些都在上游计算完成（masstrust 本身从不
+计算化学性质；详见
+[`docs/graded-loss-integration.md`](docs/graded-loss-integration.md)）：
+
+```bash
+masstrust certify-batch \
+  --calibration val.csv \
+  --test test.csv \
+  --score score-gap \
+  --alpha 0.05 \
+  --gamma 0.05 \
+  --loss-column tanimoto_loss \
+  --accepted accepted.csv \
+  --abstained abstained.csv \
+  --certificate certificate.json \
+  --report report.md
+```
+
+- 对每一条可评分的**校准**查询都是必需的（若该列不存在，或某个值缺失/格式错误/超出
+  `[0, 1]`/非有限，都会硬性报错）。对 `--test` 则是真正可选的 —— 完全没有该列的无标签测试集
+  也能成功完成认证，只是无法得出实现风险的数值。
+- `certificate.json`/`report.md` 会记录 `loss_kind`/`loss_label`/`loss_column`/`loss_domain`，
+  使得使用 `--loss-column` 得到的认证结果不会被误读为针对完全匹配风险的认证。
+- 实现风险始终只针对认证时所用的*同一种*损失来解析 —— 若要求针对不同的 `--loss-column`
+  （或针对分级损失认证结果要求二元正确率）来解析，会得到硬性报错，而不是悄悄返回一个不匹配
+  的数字。
+
+`masstrust` 现有的校准方法（`empirical`/`binomial`/`crc`）不受此功能影响 —— 下方的科学注意
+事项同样适用于 `certify-batch`。
+
+---
+
 ## 理解风险与覆盖率
 
 **风险-覆盖率曲线 (risk-coverage curve)** 描述了接受/弃权之间的权衡：
