@@ -34,6 +34,33 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   → `evaluate` pipeline against real, CC-BY 4.0-licensed third-party MS/MS data, with zero
   `masstrust-core` changes needed to carry nine domain provenance columns.
 
+### Fixed
+
+- `masstrust certify-batch`/`calibrate`/`apply`/Python `save_policy`+`load_policy`: a threshold
+  computed via arithmetic (e.g. a score-gap threshold from subtracting two scores) could come
+  back from `policy.json` as a different `f64` than what was written and certified against
+  (`serde_json`'s default float parser is not round-trip-exact — fixed by enabling its
+  `float_roundtrip` feature workspace-wide). Impact on accept/reject decisions was negligible
+  (~1e-17 relative), but `policy.json` is documented as a "reproducible decision" artifact, and a
+  save/load round trip silently changing the threshold's exact bit pattern violated that. New
+  regression test (`test_policy_json_roundtrip_is_bit_exact_for_arithmetic_thresholds`) using an
+  arithmetic-derived threshold — the pre-existing round-trip test used a literal that happened not
+  to expose this. The CI Python wheel smoke test now also exercises `apply_policy`/`save_policy`/
+  `load_policy`/`aurc`/`eaurc` (previously untested — only `compute_curve`/`calibrate` were
+  covered).
+- `benchmarks/massspecgym/run_baseline.py`: the throughput bottleneck behind the ~1-month/50-epoch
+  projection recorded during the official seed-0 run attempt is `RetrievalDataset.__getitem__`
+  recomputing an RDKit InChIKey (label matching) and Morgan fingerprint for every candidate
+  (up to 256/query) on every access, with no caching — confirmed by `cProfile` to be ~98% of
+  `__getitem__`'s wall time on real data. Since the candidate pool per query never changes across
+  a run and both transforms are pure functions of the input SMILES, this was pure redundant
+  recomputation (once per repeat spectrum of the same molecule within an epoch, and again every
+  epoch). New `_CachingTransform` (memoizes both by SMILES, `--fingerprint-cache-size` to bound
+  memory) is a benchmark-harness-only change — no `massspecgym`/`masstrust-core`/`masstrust-cli`
+  changes. Measured ~73x end-to-end speedup (data loading + real forward/backward/optimizer step)
+  once the cache is warm, on a controlled sample — see `README.md`'s Status section. The real
+  50-epoch run itself has not been relaunched with this fix.
+
 ---
 
 ## [0.2.0] — 2026-08-08

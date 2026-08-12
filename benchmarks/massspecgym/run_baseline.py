@@ -77,6 +77,50 @@ class _RetrievalDatasetWithCandidates(RetrievalDataset):
         return item
 
 
+class _CachingTransform:
+    # RetrievalDataset.__getitem__ calls both mol_label_transform and
+    # mol_transform once per candidate (up to 256/query) on every access, with
+    # no caching (confirmed by profiling: this is ~98% of __getitem__'s wall
+    # time, and mol_label_transform's InChIKey computation is actually larger
+    # than mol_transform's fingerprinting -- 11.45s vs 6.16s over a 192-item,
+    # single-process sample). The candidate pool for a given query molecule is
+    # fixed for the whole run (loaded once from a static JSON file at dataset
+    # construction), and the wrapped transform is a pure function of the input
+    # SMILES string (same SMILES -> same InChIKey/fingerprint, always) -- so
+    # memoizing eliminates purely redundant recomputation: the same query's
+    # candidates get re-transformed once per repeat spectrum of that molecule
+    # within an epoch, and again every one of 50 epochs, without this.
+    #
+    # A plain dict (not functools.lru_cache) so this stays serializable for
+    # DataLoader's worker processes: massspecgym's MassSpecDataModule defaults
+    # to persistent_workers=True whenever num_workers>0, so each worker's
+    # cache lives for the entire run once built, not just one epoch. An
+    # lru_cache wrapper object is not serializable that way; a plain dict is
+    # (it is always empty at that point in setup and fills in independently
+    # per worker afterward). maxsize bounds memory instead of true LRU
+    # eviction -- once full, new SMILES are computed but not cached; already
+    # cached ones keep being served. Simpler than real LRU and sufficient
+    # here: the value is avoiding recomputation for SMILES seen again, not
+    # evicting optimally.
+    def __init__(self, transform, maxsize=None):
+        self._transform = transform
+        self._maxsize = maxsize
+        self._cache = {}
+
+    def from_smiles(self, mol):
+        try:
+            return self._cache[mol]
+        except KeyError:
+            pass
+        value = self._transform.from_smiles(mol)
+        if self._maxsize is None or len(self._cache) < self._maxsize:
+            self._cache[mol] = value
+        return value
+
+    def __call__(self, mol):
+        return self.from_smiles(mol)
+
+
 def sha256_of(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -247,6 +291,14 @@ def main() -> None:
         help="preflight: pipeline smoke-check on real data, limited batches, not a "
              "benchmark number. benchmark: the real run (default).",
     )
+    parser.add_argument(
+        "--fingerprint-cache-size", type=int, default=200_000,
+        help="Max distinct candidate SMILES to memoize Morgan fingerprints for "
+             "(see _CachingTransform). 0 disables caching entirely. Each entry is "
+             "~4 * fp_size bytes (int32); the default (200k) is ~3.2GB at the "
+             "default --fp-size 4096. InChIKey label memoization is unbounded "
+             "(each entry is a short string, negligible memory).",
+    )
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -287,10 +339,25 @@ def main() -> None:
     )
     mol_to_inchikey = MolToInChIKey()
 
+    # See _CachingTransform above: RetrievalDataset.__getitem__ re-transforms
+    # every candidate on every access with no caching of its own, confirmed by
+    # profiling to be ~98% of __getitem__'s wall time and the single largest
+    # contributor to this benchmark's throughput problem (see tasks/todo.md).
+    # mol_label_transform is unbounded (cheap: short InChIKey strings);
+    # mol_transform (fingerprints) is bounded by --fingerprint-cache-size.
+    fp_cache_size = args.fingerprint_cache_size if args.fingerprint_cache_size > 0 else None
+    if args.fingerprint_cache_size == 0:
+        mol_transform = MolFingerprinter(fp_size=args.fp_size)
+        mol_label_transform = MolToInChIKey()
+    else:
+        mol_transform = _CachingTransform(MolFingerprinter(fp_size=args.fp_size), maxsize=fp_cache_size)
+        mol_label_transform = _CachingTransform(MolToInChIKey(), maxsize=None)
+
     dataset = _RetrievalDatasetWithCandidates(
         pth=dataset_pth,
         spec_transform=SpecBinner(max_mz=args.max_mz, bin_width=args.bin_width),
-        mol_transform=MolFingerprinter(fp_size=args.fp_size),
+        mol_transform=mol_transform,
+        mol_label_transform=mol_label_transform,
         candidates_pth=candidates_pth,
     )
     data_module = MassSpecDataModule(

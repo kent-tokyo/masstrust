@@ -119,6 +119,40 @@ def main() -> None:
                 assert float(row["unscoreable_rate"]) == 0.0, "candidate-count must always be scoreable"
     print("   OK")
 
+    print("6. _CachingTransform memoizes by SMILES and respects maxsize...")
+    from run_baseline import _CachingTransform
+
+    class _CountingTransform:
+        def __init__(self):
+            self.calls = 0
+
+        def from_smiles(self, mol):
+            self.calls += 1
+            return f"result-for-{mol}"
+
+    inner = _CountingTransform()
+    cached = _CachingTransform(inner, maxsize=2)
+    assert cached("a") == "result-for-a"
+    assert cached("a") == "result-for-a"
+    assert inner.calls == 1, "repeated input must hit the cache, not recompute"
+    cached("b")
+    assert inner.calls == 2
+    cached("c")  # cache is now at maxsize=2 (a, b); c is computed but not stored
+    assert inner.calls == 3
+    assert len(cached._cache) == 2, "cache must not grow past maxsize"
+    cached("c")  # not cached -> recomputed
+    assert inner.calls == 4, "evicted-by-maxsize entries must recompute, not error"
+
+    inner_unbounded = _CountingTransform()
+    unbounded = _CachingTransform(inner_unbounded, maxsize=None)
+    for i in range(50):
+        unbounded(f"x{i}")
+    assert inner_unbounded.calls == 50
+    assert len(unbounded._cache) == 50, "maxsize=None must never evict"
+    unbounded("x0")
+    assert inner_unbounded.calls == 50, "maxsize=None must still cache everything seen"
+    print("   OK")
+
     print("\nAll smoke tests passed.")
 
 

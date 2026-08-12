@@ -24,15 +24,45 @@ None of that touches any Rust crate.
   a real `DataLoader`-worker crash (fixed — see below). After that fix, the
   run itself progressed but at a rate that would take on the order of a
   month for 50 epochs on the machine tested so far (Apple Silicon, MPS
-  backend) — almost certainly RDKit candidate-fingerprint computation, not
-  the accelerator, per-query up to 256 candidates × batch-size-many queries
-  per batch, all CPU-bound regardless of GPU. Stopped before any checkpoint
-  was written; no benchmark numbers exist yet. See `tasks/todo.md` for the
-  current state and what needs investigating (throughput profiling, `num_workers`
-  tuning, precomputed/cached candidate fingerprints, or real CUDA hardware)
-  before relaunching.
+  backend). Stopped before any checkpoint was written; no benchmark numbers
+  exist yet.
+- **Throughput bottleneck profiled and identified**: `cProfile` against the
+  real dataset confirms the ~1-month projection above is almost entirely
+  `RetrievalDataset.__getitem__` re-computing an RDKit InChIKey (for label
+  matching) and Morgan fingerprint for every candidate (up to 256/query) on
+  every access, with zero caching upstream — ~98% of `__getitem__`'s wall
+  time in a real, unshuffled 192-item sample, and the InChIKey label pass is
+  actually larger than the fingerprint pass (11.5s vs 6.2s). Since the
+  candidate pool per query is fixed for the whole run and both transforms are
+  pure functions of the input SMILES, this is purely redundant recomputation
+  — the same query's candidates get re-transformed once per repeat spectrum
+  of that molecule within an epoch, and again on every one of 50 epochs.
+  `run_baseline.py`'s new `_CachingTransform` (module-level, so it survives
+  massspecgym's `persistent_workers=True` default) memoizes both by SMILES
+  string, no upstream/massspecgym changes needed. Measured effect on a
+  controlled, unshuffled, real (data loading + model forward/backward/
+  optimizer step) 3-batch sample: **12.48s/batch (no cache) → 1.66s/batch
+  (cache, first pass) → 0.17s/batch (cache, same items re-fetched — the
+  realistic steady state for epoch 2 onward)**, a ~73x end-to-end speedup
+  once the cache is warm. This is a throughput fix, not a new benchmark run —
+  see "Not yet done" below for what relaunching the real 50-epoch run still
+  needs.
 - **No benchmark numbers have been published or recorded anywhere** — only
   preflight runs (explicitly non-representative, small-batch) have completed.
+
+### Not yet done
+
+- The real 50-epoch seed-0 run has **not** been relaunched with this fix —
+  profiling and the fix above were deliberately scoped to throughput
+  investigation only, not a new training run. The ~73x figure is from a
+  3-batch controlled sample, not a full-epoch measurement; a full run could
+  behave somewhat differently (fingerprint-cache memory pressure at full
+  scale, `num_workers>0` behavior, val/test-fold cache misses on first
+  evaluation, GPU/MPS characteristics over a period of hours rather than
+  seconds).
+- `--fingerprint-cache-size` (default 200,000 entries, ~3.2GB at
+  `--fp-size 4096`) is an untuned default — worth revisiting once a real run
+  is attempted.
 
 ## Protocol
 
