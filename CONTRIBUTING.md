@@ -8,10 +8,11 @@ Thank you for your interest in contributing.
 git clone https://github.com/kent-tokyo/masstrust
 cd masstrust
 
-# Build and test
+# Build and test (matches CI exactly — see .github/workflows/ci.yml)
 cargo build --workspace --exclude masstrust-py
-cargo test  --workspace --exclude masstrust-py
-cargo clippy --workspace --exclude masstrust-py --all-targets -- -D warnings
+cargo test  --workspace --exclude masstrust-py --all-features
+cargo test  --workspace --exclude masstrust-py --no-default-features
+cargo clippy --workspace --exclude masstrust-py --all-targets --all-features -- -D warnings
 cargo fmt --all -- --check
 
 # Python wheel (requires maturin)
@@ -23,10 +24,13 @@ pip install target/wheels/masstrust-*.whl
 
 A change is complete only when:
 
-- `cargo fmt --all` passes
-- `cargo clippy --workspace --exclude masstrust-py --all-targets -- -D warnings` passes
-- `cargo test --workspace --exclude masstrust-py` passes
-- `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude masstrust-py --no-deps` passes
+- `cargo fmt --all -- --check` passes
+- `cargo clippy --workspace --exclude masstrust-py --all-targets --all-features -- -D warnings`
+  passes
+- `cargo test --workspace --exclude masstrust-py --all-features` passes
+- `cargo test --workspace --exclude masstrust-py --no-default-features` passes
+- `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude masstrust-py --all-features
+  --no-deps` passes
 - Edge cases and error paths are tested
 
 ## Scientific claims
