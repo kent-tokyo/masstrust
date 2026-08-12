@@ -89,10 +89,18 @@ jobs:
               "examples/labeled_candidates.csv", "score-gap"
           )
           assert len(curve) == 4, f"expected 4 rows, got {len(curve)}"
+          assert masstrust.aurc(curve) >= 0.0
+          assert masstrust.eaurc(curve) is not None
           policy = masstrust.calibrate(
               "examples/labeled_candidates.csv", "score-gap", 0.2
           )
           assert policy["threshold"] < 1.0
+          decisions = masstrust.apply_policy("examples/candidates.csv", policy)
+          assert len(decisions) > 0
+          assert all("accepted" in d for d in decisions)
+          masstrust.save_policy("/tmp/smoke_policy.json", policy)
+          loaded = masstrust.load_policy("/tmp/smoke_policy.json")
+          assert loaded["threshold"] == policy["threshold"]
           print("Python smoke test passed")
           PYEOF
 
