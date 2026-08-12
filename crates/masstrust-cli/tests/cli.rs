@@ -132,6 +132,98 @@ fn test_apply_command() {
 }
 
 #[test]
+fn test_batch_command() {
+    let policy_file = tempfile::NamedTempFile::new().unwrap();
+    Command::new(bin())
+        .args([
+            "calibrate",
+            examples_dir()
+                .join("labeled_candidates.csv")
+                .to_str()
+                .unwrap(),
+            "--score",
+            "score-gap",
+            "--error-rate",
+            "0.20",
+            "--method",
+            "empirical",
+            "--out",
+            policy_file.path().to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let output = Command::new(bin())
+        .args([
+            "batch",
+            examples_dir().join("candidates.csv").to_str().unwrap(),
+            examples_dir()
+                .join("labeled_candidates.csv")
+                .to_str()
+                .unwrap(),
+            "--policy",
+            policy_file.path().to_str().unwrap(),
+            "--out-dir",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run masstrust");
+    assert!(output.status.success());
+
+    for stem in ["candidates", "labeled_candidates"] {
+        assert!(out_dir.path().join(format!("{stem}_trusted.csv")).exists());
+        assert!(
+            out_dir
+                .path()
+                .join(format!("{stem}_abstained.csv"))
+                .exists()
+        );
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Batch done: 2 files"));
+}
+
+#[test]
+fn test_batch_no_inputs_error() {
+    let policy_file = tempfile::NamedTempFile::new().unwrap();
+    Command::new(bin())
+        .args([
+            "calibrate",
+            examples_dir()
+                .join("labeled_candidates.csv")
+                .to_str()
+                .unwrap(),
+            "--score",
+            "score-gap",
+            "--error-rate",
+            "0.20",
+            "--method",
+            "empirical",
+            "--out",
+            policy_file.path().to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+
+    let out_dir = tempfile::tempdir().unwrap();
+    let output = Command::new(bin())
+        .args([
+            "batch",
+            "--policy",
+            policy_file.path().to_str().unwrap(),
+            "--out-dir",
+            out_dir.path().to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run masstrust");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("No input files specified"));
+}
+
+#[test]
 fn test_missing_column_error() {
     use std::io::Write;
     let mut bad_csv = tempfile::NamedTempFile::new().unwrap();
