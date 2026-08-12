@@ -2,14 +2,22 @@
 
 ## Status
 
-Design memo only — **no code changes in this pass.** Scopes a feature-gated (`risksieve`
-feature, no new default-feature surface) generalization of `certify-batch`'s loss from binary
-top-1 correctness to any `[0,1]`-bounded loss, so a caller can certify against a graded chemical
-loss (Tanimoto dissimilarity, scaffold mismatch, a hybrid) instead of only exact-match/no-match.
-This is **not** a change to `risksieve` itself — `risksieve`'s SDR guarantee is already stated for
-a generic `ClosedUnitInterval` loss; masstrust has just never constructed one other than
-correctness so far. It is also **not** a change to legacy `calibrate`/`evaluate` — see "Why
-legacy calibrate/evaluate is out of scope" below.
+**Implemented** (PR #9, merged as `3c81139`). This memo is kept as the historical design record —
+the reasoning below (responsibility split, why not compute chemistry in Rust, why legacy
+`calibrate`/`evaluate` is out of scope) is unchanged and still accurate. Two things changed
+between this memo and what actually shipped, driven by code review on the first implementation
+attempt: see "Implementation deviations from this memo" at the end. Read the doc comments on
+`risksieve_backend::LossSource`/`certify_batch_with_loss`/`resolve_realized_losses_with_loss` in
+`crates/masstrust-core/src/risksieve_backend/mod.rs` for the authoritative current API, not this
+memo's original sketch below.
+
+Scopes a feature-gated (`risksieve` feature, no new default-feature surface) generalization of
+`certify-batch`'s loss from binary top-1 correctness to any `[0,1]`-bounded loss, so a caller can
+certify against a graded chemical loss (Tanimoto dissimilarity, scaffold mismatch, a hybrid)
+instead of only exact-match/no-match. This is **not** a change to `risksieve` itself —
+`risksieve`'s SDR guarantee is already stated for a generic `ClosedUnitInterval` loss; masstrust
+has just never constructed one other than correctness so far. It is also **not** a change to
+legacy `calibrate`/`evaluate` — see "Why legacy calibrate/evaluate is out of scope" below.
 
 ## Why this exists
 
@@ -84,6 +92,11 @@ either.
 
 ## `LossSource` design
 
+**This section is the original plan and does not match what shipped — see "Implementation
+deviations from this memo" at the end.** Kept verbatim as the historical record of the starting
+point; the deviation was found during code review of the first implementation attempt, not
+during this memo's own drafting.
+
 Generalizes today's hardcoded pair in `risksieve_backend/mod.rs`:
 `correctness_loss(is_correct: bool) -> ClosedUnitInterval`, fed by `top1_is_correct(ranking)`
 (which reads `Candidate.is_correct: Option<bool>`), called from exactly two places —
@@ -136,6 +149,12 @@ scoreable calibration query (same "hard error, not silent exclusion" rule `is_co
 follows) — realized-risk resolution (`resolve_realized_losses`) uses the same column on the
 labeled batch passed to it.
 
+**As shipped, `--loss-column` on `--calibration` is required; on `--test` it's genuinely
+optional** — a `--test` file with no such column at all certifies successfully (SCoRE-SDR's
+certificate never needed a test-side loss, only a test-side score), it just can't produce a
+post-hoc realized-risk number. See "Implementation deviations from this memo" below; this
+distinction isn't in the original plan sketched above.
+
 ## Report/certificate provenance
 
 `certified_population()` already states *which scoring method* a certificate's guarantee applies
@@ -172,6 +191,46 @@ that was never suited to it.
   need its own memo if ever proposed.
 - The hybrid-loss weighting scheme (how identity/scaffold/similarity combine into one number) is
   a data-preparation concern for whoever produces the precomputed column, not something
-  `masstrust-core` opines on — `LossSource::PrecomputedColumn` is agnostic to how the column was
-  built.
-- Exact `MasstrustError` variant names/messages for missing-column and out-of-range cases.
+  `masstrust-core` opines on — `LossSource::Precomputed` is agnostic to how the map was built.
+- ~~Exact `MasstrustError` variant names/messages for missing-column and out-of-range cases.~~
+  Resolved: `MissingLossColumn`, `LossOutOfRange`, `InvalidLossValue` (malformed, distinct from
+  missing), `LossSourceMismatch` (added beyond this memo's original scope — see below).
+
+## Implementation deviations from this memo (found during code review, PR #9)
+
+The first implementation attempt followed this memo's `LossSource`/`Candidate.loss` sketch
+literally and was rejected on review for a real defect it introduces: `Candidate` is a `pub`
+struct re-exported from `masstrust-core`'s crate root, and every one of its fields is `pub`.
+Adding `pub loss: Option<f64>` to it is **source-breaking** for any downstream crate that
+constructs a `Candidate` via a struct literal (as `masstrust-core`'s own `io.rs`, `policy.rs`,
+`metrics/risk_coverage.rs`, and every `scoring/*.rs` file already do) — this memo's "additive,
+existing callers unaffected" claim was wrong for Rust struct literals specifically, even though
+it's true for the CSV/Parquet schema those fields are read from.
+
+What actually shipped instead, and why it still satisfies every requirement above:
+
+- **No `Candidate` change, at all.** `LossSource::Precomputed { label: &str, values_by_query: &
+  BTreeMap<String, f64> }` replaces `PrecomputedColumn(&str)` — the loss lives in a `query_id ->
+  f64` map the caller builds and passes in, not a field the type is extended with. New
+  `io::read_query_loss_column(path, col) -> BTreeMap<String, f64>` builds it directly from
+  `(query_id, rank, named column)`, keeping only rank-1 rows — this also fixes a
+  "read-a-row-list-and-zip-by-index" fragility the original `Candidate.loss` plan would have
+  inherited from reusing `read_group_column`'s row-order contract.
+- **`certify_batch`/`resolve_realized_losses` keep their exact original signatures**, now
+  implemented as `LossSource::BinaryCorrectness`-fixed compatibility wrappers around new
+  `certify_batch_with_loss`/`resolve_realized_losses_with_loss`. This memo's "no other function
+  signature changes" line was also wrong in the first attempt (both gained a new required
+  parameter) — the wrapper pattern restores it for real.
+- **The test side of `certify_batch_with_loss` never needs a loss**, precomputed or otherwise —
+  it only ever needed a *score* (true before this feature existed too). This memo didn't say
+  otherwise, but the first implementation's CLI wiring accidentally required `--loss-column` to
+  exist in `--test` too, which would have made a genuinely unlabeled test set an error. Fixed:
+  `--test` reading the loss column is optional, and `MasstrustError::MissingColumn` from that
+  specific read is treated as "no test labels" rather than propagated.
+- **Added beyond this memo's original scope**: `BatchCertification.loss_kind` (typed, not just
+  the `loss_source` string this memo planned) lets `resolve_realized_losses_with_loss` reject
+  (`MasstrustError::LossSourceMismatch`) being asked to resolve realized risk under a *different*
+  loss than what was actually certified.
+- Report/certificate provenance shipped as four fields (`loss_kind`, `loss_label`, `loss_column`,
+  `loss_domain`) rather than this memo's single `loss_source` string — same intent (never
+  presentable as exact-match risk without qualification), more machine-readable.

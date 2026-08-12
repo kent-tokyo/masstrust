@@ -135,7 +135,7 @@ $ masstrust calibrate examples/massspecgym_candidates.csv \
 $ masstrust apply examples/candidates.csv --policy policy.json \
     --out trusted.csv --abstained abstained.csv
 
-受理: 1  棄権: 1
+受理: 1  棄権: 1  （trusted.csv と abstained.csv を書き込み）
 ```
 
 **SVG プロット**（`--features plot` が必要）：
@@ -240,6 +240,83 @@ masstrust calibrate labeled.csv --score score-gap --error-rate 0.05 --method bin
 # CRC スタイル（実験的）
 masstrust calibrate labeled.csv --score score-gap --error-rate 0.05 --method crc --out policy.json
 ```
+
+---
+
+## バッチ選択的デプロイ証明（`risksieve`、オプション）
+
+`masstrust certify-batch` は **feature-gated**（`--features risksieve`）な独立ワークフローで、
+[`risksieve`](https://crates.io/crates/risksieve) クレートの SCoRE-SDR コントローラ（Bai and
+Jin, 2026, arXiv:2603.24704）上に構築されています。デフォルトビルドには一切公開されません。
+
+**これは再利用可能な閾値ポリシーではありません。** `calibrate`/`apply` と異なり、実行するたびに
+特定のキャリブレーションセット + テストバッチのペアに対して新しい選択を計算します — デフォルトの
+construction の e-value はテストバッチ全体の構成に依存するため、同じキャリブレーションデータでも
+異なるテストバッチに対しては異なる部分集合を選択します。このコマンドが新しい `CalibrationMethod`
+ではなく独立したコマンドである理由、および `GuaranteeKind::SelectiveDeploymentRisk` が主張する
+ことと主張しないことの詳細は
+[`docs/risksieve-integration.md`](docs/risksieve-integration.md) を参照してください。
+
+```bash
+masstrust certify-batch \
+  --calibration val.csv \
+  --test test.csv \
+  --score score-gap \
+  --alpha 0.05 \
+  --gamma 0.05 \
+  --construction coupled \
+  --accepted accepted.csv \
+  --abstained abstained.csv \
+  --certificate certificate.json \
+  --report report.md
+```
+
+- リスク保証は明示された前提条件に依存します（キャリブレーションと*テストバッチ全体*の交換可能
+  性、`[0, 1]` に収まる損失など）— `certificate.json` と `report.md` の両方に前提条件が全文記録
+  されているので、数値を信頼する前に必ず読んでください。
+- **選択数がゼロであることは正常かつ有効な証明**であり、エラーではありません — SCoRE-SDR の境界
+  は空の選択集合に対しても自明に成立します。
+- `test.csv` に `is_correct` ラベルが含まれている場合、レポートには**実現選択的リスク
+  (realized selective risk)** も出力されます — このバッチの実際の結果から計算された事後的な
+  記述統計量です。上記の理論的に裏付けられた証明とは明確に区別され、その証明を検証（または否定）
+  するものとしては扱われません。
+
+### 段階的な化学損失（`--loss-column`）
+
+デフォルトでは、証明/実現される損失は二値の top-1 正解率（`is_correct`：正解なら `0.0`、それ以外
+なら `1.0`）です。`--loss-column <name>` を指定すると、代わりに任意の `[0, 1]` に収まる事前計算
+済みの損失（例：Tanimoto 非類似度やスキャフォールドの不一致。上流で計算されたもの — masstrust
+自体は化学計算を行いません。詳細は
+[`docs/graded-loss-integration.md`](docs/graded-loss-integration.md) を参照）に対して証明でき
+ます：
+
+```bash
+masstrust certify-batch \
+  --calibration val.csv \
+  --test test.csv \
+  --score score-gap \
+  --alpha 0.05 \
+  --gamma 0.05 \
+  --loss-column tanimoto_loss \
+  --accepted accepted.csv \
+  --abstained abstained.csv \
+  --certificate certificate.json \
+  --report report.md
+```
+
+- スコア付け可能な**キャリブレーション**クエリすべてで必須です（カラムが存在しない、値が欠損/
+  不正/`[0, 1]` の範囲外/非有限の場合はハードエラー）。`--test` 側では本当にオプションです —
+  該当カラムが一切ないラベルなしのテストセットでも証明は成功します。ただし実現リスクの数値は
+  算出できません。
+- `certificate.json`/`report.md` は `loss_kind`/`loss_label`/`loss_column`/`loss_domain` を
+  記録するため、`--loss-column` の証明が完全一致リスクを証明していると誤読されることはありませ
+  ん。
+- 実現リスクは常に証明で使われたのと*同じ*損失に対してのみ解決されます — 異なる `--loss-column`
+  （または段階的損失の証明に対して二値正解率）で要求するとハードエラーになり、密かに不整合な数
+  値が返されることはありません。
+
+`masstrust` の既存のキャリブレーション方法（`empirical`/`binomial`/`crc`）はこの機能の影響を
+受けません — 下記の科学的注意事項は `certify-batch` にも当てはまります。
 
 ---
 

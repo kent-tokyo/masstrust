@@ -22,7 +22,16 @@ list`, and the crates.io/PyPI APIs — the only two published versions are:
   released, tagged, or published v0.3.0/v0.4.0 — those were internal working labels in local
   task-tracking notes, not separate releases, and are not used here.
 
-There is currently no unreleased core-crate work on `main` beyond v0.2.0.
+**On `main`, unreleased beyond v0.2.0**: graded chemical loss for `certify-batch`
+(`--loss-column`) — certify a SCoRE-SDR batch against any `[0,1]`-bounded precomputed loss
+(e.g. Tanimoto dissimilarity, scaffold mismatch) instead of only binary top-1 correctness.
+Design: `docs/graded-loss-integration.md`. `Candidate`'s public shape is unchanged (the loss is
+a caller-supplied `query_id -> f64` map, not a new field); `certify_batch`/
+`resolve_realized_losses` keep their exact pre-existing signatures as compatibility wrappers. No
+chemistry dependency in `masstrust-core`/`masstrust-cli` — Tanimoto/scaffold computation is a
+data-preparation concern, same pattern `benchmarks/massspecgym/run_baseline.py` already uses for
+InChIKeys. Not yet validated on real predictions — see "In progress / blocked" below, this is
+gated on the same MassSpecGym throughput blocker.
 
 ## On `main` (research / benchmark harnesses — not published packages, not version-numbered)
 
@@ -41,20 +50,22 @@ There is currently no unreleased core-crate work on `main` beyond v0.2.0.
   v1 candidate-pool artifact was confirmed not publicly retrievable; scope was narrowed and
   named accordingly). Complete, with a documented assumption-unverified caveat on whole-batch
   exchangeability.
-- **`benchmarks/dna_adductomics/`** (this PR — docs only): Phase A literature/data
-  reconnaissance for cancer-relevant DNA-adductomics MS/MS selective-annotation, with colibactin
-  as the requested first killer use case. **Both the colibactin-specific benchmark and a
-  general-DNA-adductomics benchmark are NO-GO** against this project's own pre-registered
-  minimum-n floor — see `benchmarks/dna_adductomics/FEASIBILITY.md`. Separately, a local
-  exploratory n=8 preflight run established end-to-end adapter/schema/calibration compatibility
-  against real third-party data; reproducibility scripts and the explicitly-non-benchmark
-  preflight report are planned for a follow-up PR and are **not** part of this documentation PR
-  or currently on `main` — nothing here should be read as those scripts/report already existing
-  in the repository.
+- **`benchmarks/dna_adductomics/`**: Phase A literature/data reconnaissance for cancer-relevant
+  DNA-adductomics MS/MS selective-annotation, with colibactin as the requested first killer use
+  case. **Both the colibactin-specific benchmark and a general-DNA-adductomics benchmark are
+  NO-GO** against this project's own pre-registered minimum-n floor — see
+  `benchmarks/dna_adductomics/FEASIBILITY.md`. A real-data **pipeline-verification preflight**
+  (n=8, explicitly not a benchmark — see `PREFLIGHT_REPORT.md`'s disclaimer) is on `main`:
+  reproducible adapter scripts, a network-free `selftest.py`, and checksum-verified data
+  download. Nothing here should be cited as a DNA-adductomics selective-annotation *result*.
 
 ## In progress / blocked
 
-- MassSpecGym official seed-0 benchmark run (throughput-blocked, see above).
+- MassSpecGym official seed-0 benchmark run (throughput-blocked, see above). Also now blocks
+  validating graded chemical loss (`certify-batch --loss-column`, see "Released" above) against
+  real predictions with real candidate identity — `docs/graded-loss-integration.md`'s
+  verification plan needs exactly this run's output (full candidate SMILES, not just top-1) to
+  compute a real Tanimoto/scaffold loss column against.
 - Colibactin-specific DNA-adduct annotation benchmark: **blocked on data availability, not on
   masstrust or on this project's effort.** No public repository (GNPS/MassIVE/MetaboLights/
   Metabolomics Workbench/PRIDE) hosts candidate-ranking-ready colibactin MS/MS data; landmark

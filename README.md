@@ -135,7 +135,7 @@ Calibration result (ScoreGap, empirical):
 $ masstrust apply examples/candidates.csv --policy policy.json \
     --out trusted.csv --abstained abstained.csv
 
-Accepted: 1  Abstained: 1
+Accepted: 1  Abstained: 1  (wrote trusted.csv and abstained.csv)
 ```
 
 **SVG plots** (requires `--features plot`):
@@ -272,7 +272,7 @@ masstrust certify-batch \
 ```
 
 - The risk guarantee is conditional on stated assumptions (exchangeability of calibration and
-  the *entire* test batch jointly, a bounded 0/1 loss, and so on) — `certificate.json` and
+  the *entire* test batch jointly, a `[0, 1]`-bounded loss, and so on) — `certificate.json` and
   `report.md` both record them in full; read them before trusting a number.
 - **Zero selections is a normal, valid certificate**, not an error — SCoRE-SDR's bound holds
   trivially on an empty selected set.
@@ -280,6 +280,37 @@ masstrust certify-batch \
   selective risk** — a post-hoc descriptive statistic computed from this one batch's actual
   outcomes. It is kept clearly separate from the theorem-backed certificate above it and never
   described as validating (or invalidating) that certificate.
+
+### Graded chemical loss (`--loss-column`)
+
+By default the certified/realized loss is binary top-1 correctness (`is_correct`: `0.0` if
+correct, `1.0` otherwise). `--loss-column <name>` certifies against any `[0, 1]`-bounded
+precomputed loss instead — e.g. Tanimoto dissimilarity or scaffold mismatch, computed upstream
+(masstrust never computes chemistry itself; see [`docs/graded-loss-integration.md`](docs/graded-loss-integration.md)):
+
+```bash
+masstrust certify-batch \
+  --calibration val.csv \
+  --test test.csv \
+  --score score-gap \
+  --alpha 0.05 \
+  --gamma 0.05 \
+  --loss-column tanimoto_loss \
+  --accepted accepted.csv \
+  --abstained abstained.csv \
+  --certificate certificate.json \
+  --report report.md
+```
+
+- Required on every scoreable **calibration** query (hard error if the column is absent, or a
+  value is missing/malformed/outside `[0, 1]`/non-finite). Genuinely optional on `--test` — an
+  unlabeled test set (no such column at all) still certifies successfully; it just can't
+  produce a realized-risk number.
+- `certificate.json`/`report.md` record `loss_kind`/`loss_label`/`loss_column`/`loss_domain` so
+  a `--loss-column` certificate can never be misread as certifying exact-match risk.
+- Realized risk is always resolved against the *same* loss the certificate itself used — asking
+  for it under a different `--loss-column` (or under binary correctness, for a graded-loss
+  certificate) is a hard error, not a silently mismatched number.
 
 `masstrust`'s existing calibration methods (`empirical`/`binomial`/`crc`) are untouched by this
 feature — see the scientific caveats below, which apply to `certify-batch` too.
