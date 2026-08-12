@@ -120,6 +120,22 @@ mod tests {
     }
 
     #[test]
+    fn test_policy_json_roundtrip_is_bit_exact_for_arithmetic_thresholds() {
+        // A threshold computed via subtraction (the realistic shape of a score-gap threshold,
+        // e.g. from calibrate_empirical) rather than a short decimal literal. serde_json's
+        // default float parser is not round-trip-exact for values like this — this requires
+        // the `float_roundtrip` feature, enabled on every serde_json dependency in this
+        // workspace precisely so policy.json stays a bit-exact "reproducible decision", not
+        // just an approximately-equal one.
+        let threshold: f64 = 0.92 - 0.81;
+        let policy = make_policy(threshold);
+        let f = NamedTempFile::new().unwrap();
+        save_policy(&policy, f.path()).unwrap();
+        let loaded = load_policy(f.path()).unwrap();
+        assert_eq!(loaded.threshold.to_bits(), threshold.to_bits());
+    }
+
+    #[test]
     fn test_unknown_version_error() {
         let mut policy = make_policy(0.18);
         policy.version = "9.9.9".into();

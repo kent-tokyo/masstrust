@@ -20,4 +20,4 @@ extension-module = ["pyo3/extension-module"]
 [dependencies]
 masstrust-core = { path = "../masstrust-core" }
 pyo3 = "0.29"
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
