@@ -653,6 +653,15 @@ Do not imply that abstention eliminates all false annotations.
 
 ## Development Roadmap
 
+**This section is the original planning-time brief, kept as historical record — it does not
+track actual shipped state.** For current release status, what's on `main` unreleased, and
+what's blocked, see [`ROADMAP.md`](ROADMAP.md) instead; it's verified against `Cargo.toml`,
+`git tag`, and the crates.io/PyPI APIs. Notably, the real v0.1.0 release already included Python
+bindings and Parquet support (labeled here as v0.3.0 goals), and the real v0.2.0 release shipped
+different features than planned below (additional scoring methods, `compare`/`drift`/
+`validate-split`/`evaluate`, risksieve-backed `certify-batch`) — plans changed during
+implementation, as they normally do.
+
 ### v0.1.0
 
 Goal: usable post-hoc CLI and Rust library.
@@ -752,14 +761,15 @@ When an AI agent works on this repository:
 
 1. Read `AGENTS.md`.
 2. Read `README.md`.
-3. Inspect `Cargo.toml` and crate structure.
-4. Identify the smallest useful change.
-5. Implement the change.
-6. Add or update tests.
-7. Run formatting.
-8. Run clippy.
-9. Run tests.
-10. Summarize what changed and what remains.
+3. Read `ROADMAP.md` for current release/in-progress/blocked status.
+4. Inspect `Cargo.toml` and crate structure.
+5. Identify the smallest useful change.
+6. Implement the change.
+7. Add or update tests.
+8. Run formatting.
+9. Run clippy.
+10. Run tests.
+11. Summarize what changed and what remains.
 
 Never make broad rewrites without a clear reason.
 
