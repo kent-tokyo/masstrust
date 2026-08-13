@@ -34,6 +34,50 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   → `evaluate` pipeline against real, CC-BY 4.0-licensed third-party MS/MS data, with zero
   `masstrust-core` changes needed to carry nine domain provenance columns.
 
+### Fixed
+
+- `masstrust certify-batch`/`calibrate`/`apply`/Python `save_policy`+`load_policy`: a threshold
+  computed via arithmetic (e.g. a score-gap threshold from subtracting two scores) could come
+  back from `policy.json` as a different `f64` than what was written and certified against
+  (`serde_json`'s default float parser is not round-trip-exact — fixed by enabling its
+  `float_roundtrip` feature workspace-wide). Impact on accept/reject decisions was negligible
+  (~1e-17 relative), but `policy.json` is documented as a "reproducible decision" artifact, and a
+  save/load round trip silently changing the threshold's exact bit pattern violated that. New
+  regression test (`test_policy_json_roundtrip_is_bit_exact_for_arithmetic_thresholds`) using an
+  arithmetic-derived threshold — the pre-existing round-trip test used a literal that happened not
+  to expose this. The CI Python wheel smoke test now also exercises `apply_policy`/`save_policy`/
+  `load_policy`/`aurc`/`eaurc` (previously untested — only `compute_curve`/`calibrate` were
+  covered).
+- `benchmarks/massspecgym/run_baseline.py`: the throughput bottleneck behind the ~1-month/50-epoch
+  projection recorded during the official seed-0 run attempt is `RetrievalDataset.__getitem__`
+  recomputing an RDKit InChIKey (label matching) and Morgan fingerprint for every candidate
+  (up to 256/query) on every access, with no caching — confirmed by `cProfile` to be ~98% of
+  `__getitem__`'s wall time on real data. Since the candidate pool per query never changes across
+  a run and both transforms are pure functions of the input SMILES, this is redundant
+  recomputation (once per repeat spectrum of the same molecule within an epoch, and again every
+  epoch). New `_CachingTransform` (memoizes both by SMILES, bit-packed for the fingerprint cache,
+  `--fingerprint-cache-size`/`--inchikey-cache-size` to bound memory, both hard-reject negative
+  values, **both default to `0` / disabled**) is a benchmark-harness-only change — no
+  `massspecgym`/`masstrust-core`/`masstrust-cli` changes. **A first pass at this measurement
+  overstated its effect** (found on review): a 3-batch controlled sample that happened to fit
+  entirely in the cache showed a ~73x speedup, wrongly generalized to a full-epoch "steady state"
+  and an "~8-9 hour" full-run projection, and the cache defaulted to a nonzero size. The real
+  constraint is that the train fold alone has 5,711,803 distinct candidate SMILES against an
+  admission-order (not LRU) cache — a real-shuffle access-pattern simulation puts even a
+  "safe-looking" 200k size at only ~18% hit rate at full scale, not full elimination of the
+  redundant-compute cost, and real-DataLoader-worker peak-RSS/hit-rate validation at any nonzero
+  size was attempted but produced an untrustworthy measurement (a real methodology bug, not fixed
+  given time already spent) and was not completed at the requested 100-300 batch scale (~10
+  minutes for just 15 batches at the real `--num-workers 1` default made that impractical). Ships
+  as opt-in, disabled-by-default infrastructure with the measured tradeoffs documented, not a
+  claimed fix — see `README.md`'s Status section for the full hit-rate-vs-memory table and what
+  remains unvalidated. Also surfaced a real `%`-formatting crash in `--help` (a table literal in
+  a `help=` string collided with `argparse`'s internal `%`-substitution) and an unrelated finding:
+  the real `--num-workers 1` default measured *slower* (40.3s/batch) than `--num-workers 0`
+  (12.48s/batch) on a real, unshuffled-vs-shuffled comparison — single-worker IPC overhead for
+  large per-item tensors, not helped by any parallelism a single worker can't provide. The real
+  50-epoch run itself has not been relaunched.
+
 ---
 
 ## [0.2.0] — 2026-08-08
