@@ -77,6 +77,9 @@ class _RetrievalDatasetWithCandidates(RetrievalDataset):
         return item
 
 
+_MISSING = object()
+
+
 class _CachingTransform:
     # RetrievalDataset.__getitem__ calls both mol_label_transform and
     # mol_transform once per candidate (up to 256/query) on every access, with
@@ -87,9 +90,23 @@ class _CachingTransform:
     # fixed for the whole run (loaded once from a static JSON file at dataset
     # construction), and the wrapped transform is a pure function of the input
     # SMILES string (same SMILES -> same InChIKey/fingerprint, always) -- so
-    # memoizing eliminates purely redundant recomputation: the same query's
-    # candidates get re-transformed once per repeat spectrum of that molecule
-    # within an epoch, and again every one of 50 epochs, without this.
+    # memoizing eliminates purely redundant recomputation.
+    #
+    # IMPORTANT (found on review, quantified against the real train fold's
+    # access pattern -- see README.md): this is an admission-order cache, not
+    # LRU, and 5,711,803 distinct candidate SMILES exist in the train fold
+    # alone. At the original default (maxsize=200_000, first-seen-wins), a
+    # realistic-shuffle simulation measures only ~18% hit rate at full
+    # dataset scale, not anywhere close to eliminating the redundant-compute
+    # cost end to end -- a small 3-batch sample that happens to fit entirely
+    # in the cache is NOT representative of a real epoch. Bit-packing
+    # (pack_bits=True) makes a *much* larger cache affordable (see below), at
+    # which point coverage becomes real (~88% by epoch 0, ~100% by epoch 1 at
+    # maxsize=6_000_000 in the same simulation) -- but the memory cost is
+    # then multiplied by however many persistent DataLoader worker processes
+    # are alive at once (train + val workers both live throughout
+    # trainer.fit()), which is why this stays an explicit, opt-in,
+    # size-bounded choice rather than an unconditional default.
     #
     # A plain dict (not functools.lru_cache) so this stays serializable for
     # DataLoader's worker processes: massspecgym's MassSpecDataModule defaults
@@ -99,26 +116,73 @@ class _CachingTransform:
     # (it is always empty at that point in setup and fills in independently
     # per worker afterward). maxsize bounds memory instead of true LRU
     # eviction -- once full, new SMILES are computed but not cached; already
-    # cached ones keep being served. Simpler than real LRU and sufficient
-    # here: the value is avoiding recomputation for SMILES seen again, not
-    # evicting optimally.
-    def __init__(self, transform, maxsize=None):
+    # -cached ones keep being served.
+    #
+    # pack_bits=True stores each cached value as a bit-packed uint8 array
+    # (np.packbits) instead of the raw array the wrapped transform returns,
+    # and unpacks (np.unpackbits) on every cache hit. Only valid when every
+    # element of the wrapped transform's output is exactly 0 or 1 (true for
+    # MolFingerprinter: massspecgym's morgan_fp() builds it from RDKit's
+    # GetMorganFingerprintAsBitVect, a genuine bit vector, never counts) --
+    # NOT for MolToInChIKey, whose output is a string. unpack_length must be
+    # the exact original array length (fp_size), since packbits pads to a
+    # multiple of 8 and unpacking without an explicit count would return
+    # those padding bits as trailing zeros when fp_size % 8 != 0.
+    def __init__(self, transform, maxsize, pack_bits=False, unpack_length=None):
+        if maxsize is not None and maxsize < 0:
+            raise ValueError(f"maxsize must be a non-negative int or None, got {maxsize!r}")
+        if pack_bits and unpack_length is None:
+            raise ValueError("unpack_length is required when pack_bits=True")
         self._transform = transform
         self._maxsize = maxsize
+        self._pack_bits = pack_bits
+        self._unpack_length = unpack_length
         self._cache = {}
+        self.hits = 0
+        self.misses = 0
+        self.admitted = 0
+        self.rejected_after_full = 0
 
     def from_smiles(self, mol):
-        try:
-            return self._cache[mol]
-        except KeyError:
-            pass
+        # numpy imported lazily, only on the pack_bits path: this module (and
+        # smoke_test.py's dependency-free checks) must keep working with
+        # neither massspecgym nor numpy installed -- see the module docstring
+        # and _IMPORT_ERROR above.
+        cached = self._cache.get(mol, _MISSING)
+        if cached is not _MISSING:
+            self.hits += 1
+            if self._pack_bits:
+                import numpy as np
+
+                return np.unpackbits(cached, count=self._unpack_length).astype(np.int32)
+            return cached
+
+        self.misses += 1
         value = self._transform.from_smiles(mol)
         if self._maxsize is None or len(self._cache) < self._maxsize:
-            self._cache[mol] = value
+            if self._pack_bits:
+                import numpy as np
+
+                self._cache[mol] = np.packbits(value.astype(np.uint8))
+            else:
+                self._cache[mol] = value
+            self.admitted += 1
+        else:
+            self.rejected_after_full += 1
         return value
 
     def __call__(self, mol):
         return self.from_smiles(mol)
+
+    def cache_info(self):
+        return {
+            "hits": self.hits,
+            "misses": self.misses,
+            "admitted": self.admitted,
+            "rejected_after_full": self.rejected_after_full,
+            "current_size": len(self._cache),
+            "maxsize": self._maxsize,
+        }
 
 
 def sha256_of(path: Path) -> str:
@@ -198,6 +262,18 @@ def batch_limit(s: str):
     # or a fraction of the dataset as float in [0, 1] — "2" and "0.1" must parse
     # to different Python types for Lightning to interpret them correctly.
     return int(s) if "." not in s else float(s)
+
+
+def cache_size(s: str) -> int:
+    # 0 disables caching for that transform entirely; a negative value is
+    # nonsensical and must be a hard error at parse time -- never silently
+    # treated as "falsy" and mapped to unbounded caching (a real bug in an
+    # earlier version of this script: `x if x > 0 else None` turned any
+    # negative value into an unbounded cache instead of rejecting it).
+    v = int(s)
+    if v < 0:
+        raise argparse.ArgumentTypeError(f"cache size must be >= 0, got {v}")
+    return v
 
 
 def export_split(
@@ -292,12 +368,40 @@ def main() -> None:
              "benchmark number. benchmark: the real run (default).",
     )
     parser.add_argument(
-        "--fingerprint-cache-size", type=int, default=200_000,
-        help="Max distinct candidate SMILES to memoize Morgan fingerprints for "
-             "(see _CachingTransform). 0 disables caching entirely. Each entry is "
-             "~4 * fp_size bytes (int32); the default (200k) is ~3.2GB at the "
-             "default --fp-size 4096. InChIKey label memoization is unbounded "
-             "(each entry is a short string, negligible memory).",
+        "--fingerprint-cache-size", type=cache_size, default=0,
+        help="Max distinct candidate SMILES to memoize Morgan fingerprints for, per "
+             "DataLoader worker process (see _CachingTransform) -- train and val "
+             "workers each keep their own independent cache, and both are alive "
+             "simultaneously during trainer.fit(). Disabled by default (0) -- this "
+             "is opt-in, unvalidated-at-scale infrastructure, not a default-on fix "
+             "(see README.md's Status section for why: no confirmed-safe peak RSS "
+             "with real DataLoader workers involved, and the train fold alone has "
+             "5,711,803 distinct candidate SMILES against an admission-order, not "
+             "LRU, cache). Bit-packed, ~731 bytes/entry measured (not the raw "
+             "~16KB/entry int32 array). Measured on the real train fold's access "
+             "pattern (realistic shuffle simulation, first-seen-wins admission, see "
+             "README.md): 200k (~146MB/worker) -> ~18pct hit rate; 1M "
+             "(~730MB/worker) -> ~53-55pct; 2M (~1.5GB/worker) -> ~70-75pct; 6M "
+             "(~4.4GB/worker, covers the full distinct-candidate count) -> ~88pct "
+             "epoch 1, ~100pct epoch 2+. Negative values are rejected. Scale up only "
+             "after checking this machine's available RAM against worker count, and "
+             "prefer confirming real peak RSS yourself first -- this has not been "
+             "validated with real DataLoader workers, only simulated.",
+    )
+    parser.add_argument(
+        "--inchikey-cache-size", type=cache_size, default=0,
+        help="Same admission policy, opt-in-by-default posture, and caveats as "
+             "--fingerprint-cache-size, for candidate InChIKey label matching "
+             "instead (mol_label_transform) -- not bit-packed (the cached value is "
+             "a short string, not a bit vector), but far cheaper per entry "
+             "regardless (~107 bytes/entry measured, vs. ~731 for a packed "
+             "fingerprint), so a much smaller fraction of available RAM is needed "
+             "for the same coverage: 6M covers the train fold's full 5,711,803 "
+             "distinct candidate SMILES at only ~0.6GB/worker. Also worth noting "
+             "InChIKey computation was measured as the *larger* of the two RDKit "
+             "costs (11.5s vs 6.2s over the same sample) despite the original "
+             "'RDKit fingerprinting' framing suggesting otherwise. Disabled by "
+             "default (0); negative values are rejected.",
     )
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -342,16 +446,21 @@ def main() -> None:
     # See _CachingTransform above: RetrievalDataset.__getitem__ re-transforms
     # every candidate on every access with no caching of its own, confirmed by
     # profiling to be ~98% of __getitem__'s wall time and the single largest
-    # contributor to this benchmark's throughput problem (see tasks/todo.md).
-    # mol_label_transform is unbounded (cheap: short InChIKey strings);
-    # mol_transform (fingerprints) is bounded by --fingerprint-cache-size.
-    fp_cache_size = args.fingerprint_cache_size if args.fingerprint_cache_size > 0 else None
+    # contributor to this benchmark's throughput problem -- see README.md's
+    # Status section for the full measured breakdown (both transforms are
+    # bounded, size-limited caches; see --fingerprint-cache-size/
+    # --inchikey-cache-size --help for the measured hit-rate/memory tradeoffs).
     if args.fingerprint_cache_size == 0:
         mol_transform = MolFingerprinter(fp_size=args.fp_size)
+    else:
+        mol_transform = _CachingTransform(
+            MolFingerprinter(fp_size=args.fp_size), maxsize=args.fingerprint_cache_size,
+            pack_bits=True, unpack_length=args.fp_size,
+        )
+    if args.inchikey_cache_size == 0:
         mol_label_transform = MolToInChIKey()
     else:
-        mol_transform = _CachingTransform(MolFingerprinter(fp_size=args.fp_size), maxsize=fp_cache_size)
-        mol_label_transform = _CachingTransform(MolToInChIKey(), maxsize=None)
+        mol_label_transform = _CachingTransform(MolToInChIKey(), maxsize=args.inchikey_cache_size)
 
     dataset = _RetrievalDatasetWithCandidates(
         pth=dataset_pth,
@@ -494,6 +603,29 @@ def main() -> None:
         manifest["requirements_lock_sha256"] = sha256_of(lock_pth)
     except Exception as e:
         print(f"WARNING: failed to freeze requirements: {e}", file=sys.stderr)
+
+    # Cache stats only reflect the main process's own dataset object. With
+    # num_workers>0 the caches that actually mattered during training lived in
+    # separate worker processes and are not visible here -- printed anyway
+    # (with that caveat) since it's still meaningful for num_workers=0 runs,
+    # and for train/test predictions exported below (this process's own
+    # trainer.test() calls use the main-process dataset directly).
+    if args.num_workers == 0:
+        cache_stats = {
+            "mol_transform": mol_transform.cache_info() if hasattr(mol_transform, "cache_info") else None,
+            "mol_label_transform": (
+                mol_label_transform.cache_info() if hasattr(mol_label_transform, "cache_info") else None
+            ),
+        }
+        manifest["candidate_transform_cache_stats"] = cache_stats
+        print("Candidate-transform cache stats (main process, num_workers=0):")
+        for name, info in cache_stats.items():
+            print(f"  {name}: {info}")
+    else:
+        print(
+            f"Candidate-transform cache stats not shown: --num-workers {args.num_workers} means "
+            f"the caches that mattered lived in separate worker processes, not this one."
+        )
 
     manifest_pth.write_text(json.dumps(manifest, indent=2, default=str))
     print(f"Updated manifest at {manifest_pth}")

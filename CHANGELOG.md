@@ -53,13 +53,30 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   recomputing an RDKit InChIKey (label matching) and Morgan fingerprint for every candidate
   (up to 256/query) on every access, with no caching — confirmed by `cProfile` to be ~98% of
   `__getitem__`'s wall time on real data. Since the candidate pool per query never changes across
-  a run and both transforms are pure functions of the input SMILES, this was pure redundant
+  a run and both transforms are pure functions of the input SMILES, this is redundant
   recomputation (once per repeat spectrum of the same molecule within an epoch, and again every
-  epoch). New `_CachingTransform` (memoizes both by SMILES, `--fingerprint-cache-size` to bound
-  memory) is a benchmark-harness-only change — no `massspecgym`/`masstrust-core`/`masstrust-cli`
-  changes. Measured ~73x end-to-end speedup (data loading + real forward/backward/optimizer step)
-  once the cache is warm, on a controlled sample — see `README.md`'s Status section. The real
-  50-epoch run itself has not been relaunched with this fix.
+  epoch). New `_CachingTransform` (memoizes both by SMILES, bit-packed for the fingerprint cache,
+  `--fingerprint-cache-size`/`--inchikey-cache-size` to bound memory, both hard-reject negative
+  values, **both default to `0` / disabled**) is a benchmark-harness-only change — no
+  `massspecgym`/`masstrust-core`/`masstrust-cli` changes. **A first pass at this measurement
+  overstated its effect** (found on review): a 3-batch controlled sample that happened to fit
+  entirely in the cache showed a ~73x speedup, wrongly generalized to a full-epoch "steady state"
+  and an "~8-9 hour" full-run projection, and the cache defaulted to a nonzero size. The real
+  constraint is that the train fold alone has 5,711,803 distinct candidate SMILES against an
+  admission-order (not LRU) cache — a real-shuffle access-pattern simulation puts even a
+  "safe-looking" 200k size at only ~18% hit rate at full scale, not full elimination of the
+  redundant-compute cost, and real-DataLoader-worker peak-RSS/hit-rate validation at any nonzero
+  size was attempted but produced an untrustworthy measurement (a real methodology bug, not fixed
+  given time already spent) and was not completed at the requested 100-300 batch scale (~10
+  minutes for just 15 batches at the real `--num-workers 1` default made that impractical). Ships
+  as opt-in, disabled-by-default infrastructure with the measured tradeoffs documented, not a
+  claimed fix — see `README.md`'s Status section for the full hit-rate-vs-memory table and what
+  remains unvalidated. Also surfaced a real `%`-formatting crash in `--help` (a table literal in
+  a `help=` string collided with `argparse`'s internal `%`-substitution) and an unrelated finding:
+  the real `--num-workers 1` default measured *slower* (40.3s/batch) than `--num-workers 0`
+  (12.48s/batch) on a real, unshuffled-vs-shuffled comparison — single-worker IPC overhead for
+  large per-item tensors, not helped by any parallelism a single worker can't provide. The real
+  50-epoch run itself has not been relaunched.
 
 ---
 

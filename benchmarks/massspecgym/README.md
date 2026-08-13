@@ -34,35 +34,102 @@ None of that touches any Rust crate.
   time in a real, unshuffled 192-item sample, and the InChIKey label pass is
   actually larger than the fingerprint pass (11.5s vs 6.2s). Since the
   candidate pool per query is fixed for the whole run and both transforms are
-  pure functions of the input SMILES, this is purely redundant recomputation
-  — the same query's candidates get re-transformed once per repeat spectrum
-  of that molecule within an epoch, and again on every one of 50 epochs.
+  pure functions of the input SMILES, this is redundant recomputation — the
+  same query's candidates get re-transformed once per repeat spectrum of that
+  molecule within an epoch, and again on every one of 50 epochs.
+- **Opt-in caching infrastructure added — not a default-on fix**:
   `run_baseline.py`'s new `_CachingTransform` (module-level, so it survives
-  massspecgym's `persistent_workers=True` default) memoizes both by SMILES
-  string, no upstream/massspecgym changes needed. Measured effect on a
-  controlled, unshuffled, real (data loading + model forward/backward/
-  optimizer step) 3-batch sample: **12.48s/batch (no cache) → 1.66s/batch
-  (cache, first pass) → 0.17s/batch (cache, same items re-fetched — the
-  realistic steady state for epoch 2 onward)**, a ~73x end-to-end speedup
-  once the cache is warm. This is a throughput fix, not a new benchmark run —
-  see "Not yet done" below for what relaunching the real 50-epoch run still
-  needs.
+  massspecgym's `persistent_workers=True` default; bit-packed for the
+  fingerprint cache) can memoize both transforms by SMILES string via
+  `--fingerprint-cache-size`/`--inchikey-cache-size`. **Both default to `0`
+  (disabled) — this ships as measured, opt-in infrastructure, not a claimed
+  fix.** First pass at this (found on review) overstated its effect: a
+  3-batch controlled sample that happened to fit entirely in the cache showed
+  a ~73x speedup and was wrongly generalized to "epoch 2 onward" and an
+  "~8-9 hour" full-run projection. That was a **best-case,
+  repeated-identical-batch speedup**, not a full-epoch number. The real
+  constraint: the train fold alone has **5,711,803 distinct candidate
+  SMILES**, and the cache is admission-order (first-seen-wins), not LRU. A
+  SMILES-access-pattern simulation against the real train fold and a real
+  shuffle order (no RDKit computation needed) gives the actual expected hit
+  rate at various cache sizes:
+
+  | cache size | ~bytes/entry (packed) | ~memory/worker | hit rate, epoch 1 | hit rate, epoch 2 |
+  |---|---|---|---|---|
+  | 200,000 | 731 | ~146MB | ~17.6% | ~18.0% |
+  | 1,000,000 | 731 | ~730MB | ~53.0% | ~55.0% |
+  | 2,000,000 | 731 | ~1.46GB | ~70.6% | ~74.7% |
+  | 6,000,000 (covers all distinct) | 731 | ~4.4GB | ~88.4% | **~100%** |
+
+  (InChIKey-cache entries are much cheaper, ~107 bytes/entry measured — a
+  6,000,000-entry InChIKey cache costs only ~0.6GB, covering the full
+  distinct-candidate count safely.) Even a "safe-looking" size (e.g. 200,000)
+  only reaches ~18% hit rate at real scale — nowhere near "steady state" or
+  the 73x figure. Real coverage requires deliberately opting into a much
+  larger cache, which costs real memory **per DataLoader worker process**
+  (train and val workers are both alive simultaneously throughout
+  `trainer.fit()`, each with its own independent cache — costs do not share
+  across workers), and **this has not been validated with real DataLoader
+  workers at any nonzero size** (see the real-worker measurement below) — so
+  this stays off by default until that validation exists. Enabling it is a
+  deliberate choice with the table above as a starting point, not a
+  recommendation.
 - **No benchmark numbers have been published or recorded anywhere** — only
   preflight runs (explicitly non-representative, small-batch) have completed.
 
 ### Not yet done
 
-- The real 50-epoch seed-0 run has **not** been relaunched with this fix —
-  profiling and the fix above were deliberately scoped to throughput
-  investigation only, not a new training run. The ~73x figure is from a
-  3-batch controlled sample, not a full-epoch measurement; a full run could
-  behave somewhat differently (fingerprint-cache memory pressure at full
-  scale, `num_workers>0` behavior, val/test-fold cache misses on first
-  evaluation, GPU/MPS characteristics over a period of hours rather than
-  seconds).
-- `--fingerprint-cache-size` (default 200,000 entries, ~3.2GB at
-  `--fp-size 4096`) is an untuned default — worth revisiting once a real run
-  is attempted.
+- The real 50-epoch seed-0 run has **not** been relaunched with this fix, and
+  won't be until the items below are addressed — profiling and the fix above
+  were deliberately scoped to throughput investigation only.
+- **Full-epoch throughput/memory/hit-rate validation** — only a short,
+  small-batch real run (with real shuffling and a real persistent
+  `num_workers=1` worker) has been measured so far, not a full ~3,033-batch
+  epoch. See the measurement recorded near the bottom of this file for what
+  was actually run and its real numbers (not a full-epoch confirmation).
+- A disk-backed, precomputed sidecar (compute every distinct candidate's
+  fingerprint/InChIKey exactly once, persist to disk, memory-map or stream
+  it back in) is the more likely path to *complete* coverage without a
+  multi-GB-per-worker in-memory cache, if the bounded in-memory cache's
+  hit rate at an affordable size turns out to be the limiting factor for a
+  real run. Not attempted here — flagged as the likely next step if the
+  in-memory approach isn't sufficient.
+
+### Real-worker measurement (partial — scope reduced from the original plan)
+
+The intended check was: real shuffling, `--num-workers 1` (the current default),
+100–300 train batches, no-cache vs. bounded+packed cache, throughput + cache hit
+rate + peak combined RSS (main process + all live worker processes). **Only the
+no-cache half completed within a practical time budget**; 15 train batches + 5
+val batches alone took ~10 minutes wall-clock, making 100–300 batches (let alone
+a full ~3,033-batch epoch) impractical to run as part of this investigation. The
+with-cache half was not run.
+
+What the no-cache run did show, and it's a real, unexpected finding in its own
+right: **`--num-workers 1` (real shuffle, one persistent worker) measured
+40.3s/batch — slower than the `--num-workers 0` controlled measurement's
+12.48s/batch** (see the Status section above), not faster. A single worker
+doesn't add parallelism (there's nothing else to overlap with), and shipping
+large per-item tensors (up to 256 candidates × several transforms) across the
+process boundary via pickling looks like real, non-trivial overhead on top of
+the RDKit cost itself. **This means the current default `--num-workers 1` may
+not even be a good choice for this workload independent of caching** — not
+validated further here, but worth investigating before relaunching any real
+run (`--num-workers 0`, or a higher worker count where parallelism might
+outweigh the per-item IPC cost, are both untested alternatives).
+
+Peak-RSS instrumentation in this same run produced an internally inconsistent
+number (a "peak combined RSS" only 29MB above baseline, while directly
+inspecting the OS process table mid-run showed a single worker process at
+~856MB RSS on its own) — the in-script `psutil`-based sampling has a real bug
+that wasn't tracked down given the time already spent; **the peak-RSS figure
+from that run is not reported as trustworthy.** Direct `ps`-table snapshots
+during the run (not the buggy in-script aggregate) showed combined main+worker
+RSS around ~1GB at one point, with the dataset/candidates-JSON load alone
+costing ~3.1GB in whichever process performs it — not a confirmed peak, just
+what was directly observed. A correct RSS measurement (and the with-cache half
+of this comparison, and cache hit rate from a real worker) remain open — see
+"Not yet done" above.
 
 ## Protocol
 
