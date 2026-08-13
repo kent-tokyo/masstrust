@@ -9,6 +9,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-08-13
+
 ### Added
 
 - `masstrust certify-batch --loss-column <name>` (requires `--features risksieve`): certify a
@@ -157,6 +159,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `examples/labeled_candidates_grouped.csv` — 8-query fixture with 3 adduct types, for testing
   grouped calibration
 
-[Unreleased]: https://github.com/kent-tokyo/masstrust/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/kent-tokyo/masstrust/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/kent-tokyo/masstrust/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/kent-tokyo/masstrust/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/kent-tokyo/masstrust/releases/tag/v0.1.0

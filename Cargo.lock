@@ -905,7 +905,7 @@ dependencies = [
 
 [[package]]
 name = "masstrust-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -920,7 +920,7 @@ dependencies = [
 
 [[package]]
 name = "masstrust-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "csv",
  "polars",
@@ -933,7 +933,7 @@ dependencies = [
 
 [[package]]
 name = "masstrust-py"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "masstrust-core",
  "pyo3",
