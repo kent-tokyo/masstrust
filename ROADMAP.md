@@ -18,32 +18,47 @@ list`, and the crates.io/PyPI APIs — the only two published versions are:
   SCoRE-SDR batch selective-deployment certification, independent of the reusable-threshold
   `calibrate`/`apply` flow — see `docs/risksieve-integration.md`). (Note: `risksieve` integration
   was previously tracked in project memory as "blocked pending a crates.io release" — that was
-  stale; it shipped in v0.2.0.) `Cargo.toml`'s workspace version is `0.2.0`; there is no
-  released, tagged, or published v0.3.0/v0.4.0 — those were internal working labels in local
-  task-tracking notes, not separate releases, and are not used here.
-
-**On `main`, unreleased beyond v0.2.0**: graded chemical loss for `certify-batch`
-(`--loss-column`) — certify a SCoRE-SDR batch against any `[0,1]`-bounded precomputed loss
-(e.g. Tanimoto dissimilarity, scaffold mismatch) instead of only binary top-1 correctness.
-Design: `docs/graded-loss-integration.md`. `Candidate`'s public shape is unchanged (the loss is
-a caller-supplied `query_id -> f64` map, not a new field); `certify_batch`/
-`resolve_realized_losses` keep their exact pre-existing signatures as compatibility wrappers. No
-chemistry dependency in `masstrust-core`/`masstrust-cli` — Tanimoto/scaffold computation is a
-data-preparation concern, same pattern `benchmarks/massspecgym/run_baseline.py` already uses for
-InChIKeys. Not yet validated on real predictions — see "In progress / blocked" below, this is
-gated on the same MassSpecGym throughput blocker.
+  stale; it shipped in v0.2.0.)
+- **v0.3.0** (2026-08-13): graded chemical loss for `certify-batch --loss-column <name>` —
+  certify a SCoRE-SDR batch against any `[0,1]`-bounded precomputed loss (e.g. Tanimoto
+  dissimilarity, scaffold mismatch) instead of only binary top-1 correctness. Required on every
+  scoreable calibration query; genuinely optional on `--test` (an unlabeled test set still
+  certifies). `certificate.json`/`report.md` gain loss provenance; resolving realized risk under
+  a different loss than what was certified is a hard error
+  (`MasstrustError::LossSourceMismatch`). `Candidate`'s public shape is unchanged (the loss is a
+  caller-supplied `query_id -> f64` map, not a new field); `certify_batch`/
+  `resolve_realized_losses` keep their exact pre-existing signatures as compatibility wrappers.
+  No chemistry dependency in `masstrust-core`/`masstrust-cli` — Tanimoto/scaffold computation is
+  a data-preparation concern, same pattern `benchmarks/massspecgym/run_baseline.py` already uses
+  for InChIKeys. Design: `docs/graded-loss-integration.md`. Not yet validated on real
+  predictions — see "In progress / blocked" below, this is gated on the same MassSpecGym
+  throughput blocker. Also fixes a real `policy.json` round-trip precision bug (`serde_json`'s
+  default float parser is not bit-exact for arithmetic-derived thresholds — the `float_roundtrip`
+  feature is now enabled workspace-wide). Released alongside, but **not part of the published
+  package** (benchmark-harness-only, see "On `main`" below): the `benchmarks/dna_adductomics/`
+  NO-GO feasibility writeup and MassSpecGym throughput profiling + opt-in, disabled-by-default
+  caching infrastructure in `benchmarks/massspecgym/run_baseline.py`. `Cargo.toml`'s workspace
+  version is `0.3.0`; there is no released, tagged, or published v0.4.0 — that remains an
+  internal working label in local task-tracking notes, not a separate release.
 
 ## On `main` (research / benchmark harnesses — not published packages, not version-numbered)
 
 - **`benchmarks/massspecgym/`**: real-data harness against the official MassSpecGym v1.5
   retrieval benchmark. Preflight (small-batch, pipeline-verification) run completed successfully,
   5 real bugs found and fixed along the way. **Official seed-0 50-epoch run is blocked**: on this
-  machine's Apple Silicon (MPS backend), training throughput projects to ~1 month, almost
-  certainly RDKit per-candidate fingerprinting in `RetrievalDataset.__getitem__` (CPU-bound
-  regardless of accelerator), not the accelerator itself. No checkpoint was lost (stopped at 9%
-  of epoch 0). **Next step before relaunching**: profile the actual per-batch bottleneck
-  (data loading vs. forward pass vs. fingerprinting) and consider `num_workers` tuning,
-  precomputed/cached candidate fingerprints, larger batch size, or real CUDA hardware.
+  machine's Apple Silicon (MPS backend), training throughput projects to ~1 month. No checkpoint
+  was lost (stopped at 9% of epoch 0). **Root cause confirmed by profiling** (`cProfile`, real
+  data): `RetrievalDataset.__getitem__` recomputing an RDKit InChIKey and Morgan fingerprint for
+  every candidate on every access, no caching, ~98% of `__getitem__`'s wall time — CPU-bound,
+  not the accelerator. `run_baseline.py` gained opt-in `--fingerprint-cache-size`/
+  `--inchikey-cache-size` memoizing caches (both default `0`/disabled: real-DataLoader-worker
+  peak-RSS/hit-rate validation at any nonzero size did not complete within a reasonable
+  measurement budget, and a real-scale access-pattern simulation shows even a 200k-entry cache
+  only reaches ~18% hit rate against 5.7M distinct train candidate SMILES). Ships as measured,
+  disabled-by-default infrastructure, not a claimed fix — see `benchmarks/massspecgym/README.md`
+  Status section. **Next step**: a disk-backed precomputed candidate sidecar (fingerprints/labels
+  computed once, memory-mapped, no RDKit calls during training) is the planned way to actually
+  close this out; deferred past v0.3.0, tracked for a future release.
 - **`benchmarks/selective_msms_external/`**: external query-confidence benchmark comparing
   masstrust's legacy calibration methods against risksieve-backed SCoRE-SDR certification, on
   Selective-MSMS's published per-query confidence (not a candidate-ranking importer — the exact

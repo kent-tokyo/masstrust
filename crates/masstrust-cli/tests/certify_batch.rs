@@ -611,18 +611,21 @@ fn risksieve_version_matches_the_exact_pin_in_cargo_lock() {
 /// checkout.
 #[test]
 fn no_pending_changes_under_tasks_from_this_work() {
+    // tasks/*.md is local-only planning content: editing it in the working tree is expected
+    // and normal, but it must never be *staged* for a commit. Checking `git status` (working
+    // tree + index) instead of just the index would fail on every ordinary local edit.
     let repo_root = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
     let output = Command::new("git")
-        .args(["status", "--porcelain", "--", "tasks/"])
+        .args(["diff", "--cached", "--name-only", "--", "tasks/"])
         .current_dir(&repo_root)
         .output();
     let Ok(output) = output else {
         eprintln!("git not available, skipping");
         return;
     };
-    let dirty = String::from_utf8_lossy(&output.stdout);
+    let staged = String::from_utf8_lossy(&output.stdout);
     assert!(
-        dirty.trim().is_empty(),
-        "tasks/*.md has pending changes, which must never be staged/committed: {dirty}"
+        staged.trim().is_empty(),
+        "tasks/*.md is staged, which must never be committed: {staged}"
     );
 }

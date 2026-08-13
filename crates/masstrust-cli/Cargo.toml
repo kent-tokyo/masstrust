@@ -21,7 +21,7 @@ plot = ["dep:plotters"]
 risksieve = ["dep:risksieve", "dep:sha2", "masstrust-core/risksieve"]
 
 [dependencies]
-masstrust-core = { path = "../masstrust-core", version = "0.2.0" }
+masstrust-core = { path = "../masstrust-core", version = "0.3.0" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
